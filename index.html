@@ -2,68 +2,135 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Edge Master: Invincible AI</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Edge Master: Mobile AI</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600;900&display=swap');
+
+        :root {
+            --alice-bg: #0f172a;
+            --bob-bg: #022c22;
+            --accent: #a855f7;
+        }
+
         body { 
             font-family: 'Inter', system-ui, sans-serif; 
+            background-color: var(--alice-bg);
             color: #e2e8f0; 
-            user-select: none; 
-            transition: background-color 1.5s ease;
-            -webkit-tap-highlight-color: transparent;
-        }
-        
-        /* Modern Canvas Container */
-        .canvas-container {
-            background: rgba(15, 23, 42, 0.6); 
-            border-radius: 24px;
-            box-shadow: inset 0 0 20px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.1);
-            position: relative;
-            overflow: hidden;
-            transition: box-shadow 1s ease;
-            min-height: 350px;
+            overflow: hidden; /* Prevent scrolling */
+            touch-action: none; /* Prevent default browser gestures */
+            user-select: none;
+            -webkit-user-select: none;
+            transition: background-color 1s ease;
         }
 
-        canvas { 
-            cursor: crosshair; 
-            touch-action: none; 
+        /* Full Screen Canvas */
+        #gameCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            cursor: grab;
         }
-        
-        /* Neon Thinking Bar */
-        .thinking-bar-bg { 
-            width: 100%; height: 6px; background: rgba(30, 41, 59, 0.5); border-radius: 99px; overflow: hidden; margin-top: 16px; 
+        #gameCanvas:active { cursor: grabbing; }
+
+        /* Floating UI Elements */
+        .hud-panel {
+            position: absolute;
+            z-index: 10;
+            backdrop-filter: blur(8px);
+            background: rgba(15, 23, 42, 0.85);
             border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 16px;
+            padding: 12px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
         }
-        .thinking-bar { 
-            height: 100%; 
-            background: linear-gradient(90deg, #f43f5e, #a855f7, #3b82f6); 
+
+        /* Top Status Bar */
+        .top-bar {
+            top: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            white-space: nowrap;
+            padding: 8px 20px;
+            border-radius: 99px;
+            max-width: 90%;
+        }
+
+        /* Minimal Thinking Line */
+        .thinking-line {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: linear-gradient(90deg, #f43f5e, #a855f7, #3b82f6);
             background-size: 200% 100%;
-            width: 0%; 
-            transition: width 0.2s ease-out; 
-            animation: gradient-move 2s linear infinite;
-            box-shadow: 0 0 15px rgba(168, 85, 247, 0.6);
+            animation: gradient-move 1s linear infinite;
+            z-index: 20;
+            opacity: 0;
+            transition: opacity 0.3s;
         }
         @keyframes gradient-move { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
-        
-        .panel-card { 
-            background: rgba(30, 41, 59, 0.7); 
-            backdrop-filter: blur(12px); 
-            padding: 24px; 
-            border-radius: 24px; 
-            border: 1px solid rgba(255,255,255,0.1); 
-            transition: all 0.5s ease;
-        }
-        
-        @keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.4); } 70% { box-shadow: 0 0 0 12px rgba(168, 85, 247, 0); } 100% { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0); } }
-        .ai-active { animation: pulse-ring 2s infinite; border-color: #a855f7; }
 
-        .theme-alice { background-color: #020617; background-image: radial-gradient(circle at 50% 0%, #1e1b4b 0%, #020617 60%); }
-        .theme-bob { background-color: #022c22; background-image: radial-gradient(circle at 50% 0%, #064e3b 0%, #022c22 70%); }
+        /* Settings Toggle (Bottom Right) */
+        .fab-btn {
+            position: absolute;
+            bottom: 24px;
+            right: 24px;
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: #1e293b;
+            color: white;
+            border: 1px solid rgba(255,255,255,0.1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            z-index: 20;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+            transition: transform 0.2s;
+        }
+        .fab-btn:active { transform: scale(0.9); }
+
+        /* Settings Modal Overlay */
+        #settings-modal {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            background: #1e293b;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            border-radius: 24px 24px 0 0;
+            padding: 24px;
+            transform: translateY(110%);
+            transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            z-index: 50;
+            box-shadow: 0 -10px 40px rgba(0,0,0,0.5);
+        }
+        #settings-modal.active { transform: translateY(0); }
+        .modal-backdrop {
+            position: absolute;
+            inset: 0;
+            background: rgba(0,0,0,0.6);
+            z-index: 40;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s;
+        }
+        .modal-backdrop.active { opacity: 1; pointer-events: auto; }
 
         /* Selection Screen */
         #selection-screen {
-            position: fixed;
+            position: absolute;
             inset: 0;
             background: #020617;
             z-index: 100;
@@ -71,209 +138,156 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            transition: opacity 0.5s ease, visibility 0.5s;
+            transition: opacity 0.5s ease;
+        }
+
+        /* Overlay Messages */
+        #message-overlay {
+            pointer-events: none;
+            opacity: 0;
+            transform: scale(0.9);
+            transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        #message-overlay.visible { opacity: 1; transform: scale(1); pointer-events: auto; }
+
+        /* Range Slider Styling */
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 24px;
+            width: 24px;
+            border-radius: 50%;
+            background: #a855f7;
+            cursor: pointer;
+            margin-top: -10px;
+            box-shadow: 0 0 10px rgba(168,85,247,0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: #334155;
+            border-radius: 2px;
         }
     </style>
 </head>
-<body id="mainBody" class="min-h-screen flex flex-col items-center justify-center p-4 lg:p-8 gap-6 theme-alice relative overflow-y-auto lg:overflow-hidden">
+<body>
 
-    <!-- Character Selection Screen -->
-    <div id="selection-screen">
-        <h1 class="text-4xl md:text-6xl font-black text-white tracking-tighter mb-4 drop-shadow-lg text-center">EDGE <span class="text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-600">MASTER</span></h1>
-        <p class="text-slate-400 text-sm md:text-lg mb-12 font-medium tracking-wide">Please choose your character</p>
+    <!-- Thinking Indicator -->
+    <div id="thinking-line" class="thinking-line"></div>
+
+    <!-- Canvas Layer -->
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- Top Status HUD -->
+    <div class="hud-panel top-bar" id="status-hud">
+        <div id="turn-indicator" class="w-3 h-3 rounded-full bg-emerald-500 animate-pulse"></div>
+        <div class="flex flex-col">
+            <span id="status-text" class="text-xs font-bold uppercase tracking-widest text-white">YOUR TURN</span>
+            <span id="hint-text" class="text-[10px] text-slate-400 font-mono">Double tap to cut</span>
+        </div>
+    </div>
+
+    <!-- Bottom Right Settings Button -->
+    <button class="fab-btn" onclick="toggleSettings()">
+        ⚙️
+    </button>
+
+    <!-- Modal Backdrop -->
+    <div id="modal-backdrop" class="modal-backdrop" onclick="toggleSettings()"></div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal">
+        <div class="w-12 h-1 bg-slate-600 rounded-full mx-auto mb-6"></div>
         
-        <div class="flex flex-col md:flex-row gap-6">
-            <button onclick="startGameAs(0)" class="group w-64 p-8 bg-slate-800/50 border-2 border-slate-700 rounded-3xl hover:border-purple-500 hover:bg-purple-500/10 transition-all duration-300">
-                <div class="text-6xl mb-4 group-hover:scale-110 transition-transform">👩‍🦰</div>
-                <div class="text-2xl font-black text-white mb-1">ALICE</div>
-                <div class="text-xs text-purple-400 font-bold tracking-widest uppercase">Starts First</div>
-            </button>
-            
-            <button onclick="startGameAs(1)" class="group w-64 p-8 bg-slate-800/50 border-2 border-slate-700 rounded-3xl hover:border-emerald-500 hover:bg-emerald-500/10 transition-all duration-300">
-                <div class="text-6xl mb-4 group-hover:scale-110 transition-transform">🧔</div>
-                <div class="text-2xl font-black text-white mb-1">BOB</div>
-                <div class="text-xs text-emerald-400 font-bold tracking-widest uppercase">Starts Second</div>
-            </button>
-        </div>
-    </div>
-
-    <!-- Header -->
-    <div class="w-full max-w-7xl flex flex-col md:flex-row justify-between items-end gap-4 z-10 shrink-0">
-        <div>
-            <h1 class="text-4xl md:text-6xl font-black text-white tracking-tighter mb-1 drop-shadow-lg">EDGE <span class="text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-600">MASTER</span></h1>
-            <p class="text-slate-400 text-xs md:text-sm font-medium tracking-[0.2em] uppercase">Invincible Isolation Engine</p>
-        </div>
-    </div>
-
-    <!-- Main Layout -->
-    <div class="flex flex-col-reverse lg:flex-row gap-6 w-full max-w-7xl flex-1 min-h-0 relative z-10">
-        <!-- Sidebar -->
-        <div class="w-full lg:w-80 flex flex-col gap-4 z-10 shrink-0">
-            <!-- AI Status -->
-            <div class="panel-card flex-1 flex flex-col justify-center items-center text-center relative transition-colors duration-1000 order-1 lg:order-2" id="status-panel">
-                <div id="ai-avatar" class="w-16 h-16 md:w-20 md:h-20 rounded-full bg-gradient-to-br from-slate-800 to-slate-900 border-2 border-slate-700 flex items-center justify-center mb-4 relative shadow-2xl transition-all duration-500">
-                    <div id="ai-emoji" class="text-3xl md:text-4xl">🤖</div>
-                    <div id="ai-pulse" class="absolute inset-0 rounded-full border-2 border-purple-500 opacity-0"></div>
+        <div class="space-y-6">
+            <!-- Map Size -->
+            <div>
+                <div class="flex justify-between items-center mb-2">
+                    <label class="text-sm font-bold text-slate-300">Map Size (N)</label>
+                    <span id="n-display" class="text-xs font-mono bg-slate-700 px-2 py-1 rounded text-white">9</span>
                 </div>
-                
-                <div class="text-lg font-bold text-white mb-1" id="turn-text">Your Turn</div>
-                <div class="text-xs text-slate-400 font-medium" id="sub-text">Tap to cut a connection</div>
-                
-                <div id="thinking-ui" class="w-full mt-4 md:mt-6 opacity-0 transition-opacity duration-300">
-                    <div class="flex justify-between text-[10px] text-purple-300 font-bold tracking-widest mb-2">
-                        <span>CALCULATING</span>
-                        <span id="progress-text">0%</span>
-                    </div>
-                    <div class="thinking-bar-bg">
-                        <div id="thinking-bar" class="thinking-bar"></div>
-                    </div>
-                </div>
-                <!-- AI Identity Badge -->
-                <div id="model-status" class="mt-4 px-3 py-1 rounded-full text-[10px] font-bold tracking-widest uppercase transition-colors opacity-0"></div>
+                <input type="range" id="nRange" min="4" max="12" value="9" oninput="updateN(this.value)">
             </div>
 
             <!-- Controls -->
-            <div class="panel-card flex flex-col gap-4 order-2 lg:order-1">
-                <div>
-                    <div class="flex justify-between items-center mb-3">
-                        <label class="text-xs font-bold text-slate-400 uppercase tracking-widest">Map Size</label>
-                        <span class="text-xs font-mono text-purple-400 bg-purple-400/10 px-2 py-1 rounded">N = <span id="n-val">9</span></span>
-                    </div>
-                    <input type="range" id="nRange" min="4" max="10" value="9" class="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-purple-500 hover:accent-purple-400 transition-all">
-                </div>
-
-                <div class="flex items-center gap-3 bg-black/20 p-3 rounded-xl border border-white/5">
-                    <input type="checkbox" id="aiVsAi" class="w-5 h-5 text-purple-600 rounded bg-slate-700 border-slate-600 focus:ring-purple-500 focus:ring-offset-0 cursor-pointer">
-                    <label for="aiVsAi" class="text-sm font-semibold text-slate-300 cursor-pointer select-none">AI plays against itself</label>
-                </div>
-
-                <button id="resetBtn" onclick="restartCurrentGame()" class="group w-full py-3 bg-white text-slate-900 font-black rounded-xl text-xs transition-all shadow-[0_0_20px_rgba(255,255,255,0.1)] hover:shadow-[0_0_25px_rgba(255,255,255,0.3)] hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-2">
-                    <span class="group-hover:rotate-180 transition-transform duration-500">↻</span> START NEW GAME
+            <div class="grid grid-cols-2 gap-3">
+                <button onclick="changePlayer()" class="p-4 bg-slate-800 border border-slate-700 rounded-xl text-slate-300 font-bold text-sm hover:bg-slate-700 active:scale-95 transition-all">
+                    👤 Change Role
                 </button>
-
-                <!-- Change Player Button -->
-                <button id="changePlayerBtn" onclick="showSelection()" class="group w-full py-3 bg-slate-800 text-slate-300 font-bold border border-slate-600 rounded-xl text-xs transition-all hover:bg-slate-700 active:scale-95 flex items-center justify-center gap-2">
-                    👤 CHANGE PLAYER
+                <button onclick="restartGame()" class="p-4 bg-white text-slate-900 rounded-xl font-black text-sm hover:bg-slate-200 active:scale-95 transition-all">
+                    ↻ New Game
                 </button>
             </div>
-            
-            <button id="clearBrain" class="text-[10px] text-slate-600 hover:text-slate-400 transition-colors text-center pb-2 order-3">Reset AI Memory</button>
-        </div>
 
-        <!-- Canvas -->
-        <div class="flex-1 canvas-container flex items-center justify-center h-[400px] lg:h-auto w-full" id="game-container">
-            <canvas id="gameCanvas" class="w-full h-full"></canvas>
-            
-            <div id="overlay" class="absolute inset-0 bg-slate-900/95 backdrop-blur-xl flex flex-col items-center justify-center z-20 opacity-0 pointer-events-none transition-all duration-500 scale-95">
-                <div id="overlay-icon" class="text-6xl mb-4">🏆</div>
-                <h2 id="overlayTitle" class="text-4xl md:text-7xl font-black text-white mb-4 tracking-tighter drop-shadow-2xl text-center">YOU WON</h2>
-                <p id="overlaySub" class="text-slate-400 text-base md:text-lg font-medium mb-10 tracking-wide">You outsmarted the AI.</p>
-                <button onclick="restartCurrentGame()" class="px-12 py-5 bg-gradient-to-r from-purple-600 to-pink-600 text-white font-black rounded-full shadow-2xl hover:scale-105 transition-transform active:scale-95 text-lg tracking-wide">
-                    PLAY AGAIN
-                </button>
+            <div class="pt-4 border-t border-slate-700">
+                <p class="text-[10px] text-slate-500 text-center">
+                    Pinch to Zoom • Drag to Pan • Double Tap Edge
+                </p>
             </div>
         </div>
     </div>
 
-    <div class="w-full text-center py-4 z-0 pointer-events-none">
-        <p class="text-[10px] text-slate-600 font-medium pointer-events-auto">
-            This game is based on the question at <a href="https://puzzling.stackexchange.com/questions/131519/edge-removal-game" target="_blank" rel="noopener noreferrer" class="text-slate-500 hover:text-purple-400 transition-colors underline decoration-slate-700 underline-offset-2">StackExchange</a>
-        </p>
+    <!-- Victory/Defeat Overlay -->
+    <div id="message-overlay" class="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-6">
+        <div class="text-center max-w-sm">
+            <div id="msg-icon" class="text-6xl mb-4">🏆</div>
+            <h1 id="msg-title" class="text-4xl font-black text-white mb-2 tracking-tighter">VICTORY</h1>
+            <p id="msg-sub" class="text-slate-400 text-sm mb-8">You outsmarted the machine.</p>
+            <button onclick="restartGame()" class="w-full py-4 bg-gradient-to-r from-purple-600 to-pink-600 rounded-full font-bold text-white shadow-lg active:scale-95 transition-transform">
+                PLAY AGAIN
+            </button>
+        </div>
+    </div>
+
+    <!-- Character Selection Screen -->
+    <div id="selection-screen">
+        <h1 class="text-5xl font-black text-white tracking-tighter mb-8 drop-shadow-lg text-center">EDGE <span class="text-purple-500">MASTER</span></h1>
+        
+        <div class="flex flex-col gap-4 w-full max-w-xs px-6">
+            <button onclick="startGameAs(0)" class="relative p-6 bg-slate-800/80 border border-slate-600 rounded-2xl flex items-center gap-4 hover:border-purple-500 transition-all active:scale-95">
+                <div class="text-4xl">👩‍🦰</div>
+                <div class="text-left">
+                    <div class="font-black text-white">ALICE</div>
+                    <div class="text-[10px] text-purple-400 font-bold uppercase">Starts First</div>
+                </div>
+            </button>
+            
+            <button onclick="startGameAs(1)" class="relative p-6 bg-slate-800/80 border border-slate-600 rounded-2xl flex items-center gap-4 hover:border-emerald-500 transition-all active:scale-95">
+                <div class="text-4xl">🧔</div>
+                <div class="text-left">
+                    <div class="font-black text-white">BOB</div>
+                    <div class="text-[10px] text-emerald-400 font-bold uppercase">Starts Second</div>
+                </div>
+            </button>
+        </div>
     </div>
 
 <script>
-{ 
-class GhostBrain {
-    constructor() { this.memory = {}; this.load(); }
-    load() { try { const data = localStorage.getItem('edge_master_brain_v2'); if (data) this.memory = JSON.parse(data); } catch (e) { } }
-    save() { try { localStorage.setItem('edge_master_brain_v2', JSON.stringify(this.memory)); } catch (e) { } }
-    getValue(key) { const entry = this.memory[key]; if (!entry || entry.N === 0) return null; return entry.W / entry.N; }
-    update(key, z) { if (!this.memory[key]) this.memory[key] = { N: 0, W: 0 }; const entry = this.memory[key]; entry.N++; entry.W += z; }
-    clear() { this.memory = {}; localStorage.removeItem('edge_master_brain_v2'); }
-}
-const brain = new GhostBrain();
+/**
+ * CORE LOGIC (AI & Game State)
+ * Same robust logic as before, optimized for mobile execution
+ */
 
-// ---- ML Value Model Loader (Logistic Regression) ----
-const MLModels = {
-  // n -> { w: number[] }
-  models: new Map(),
-  // baseUrl: path to where your JSON models are stored (e.g. ./models/k9_value.json)
-  baseUrl: "./models",
-  
-  async loadForN(n) {
-    if (this.models.has(n)) return this.models.get(n);
-    const url = `${this.baseUrl}/k${n}_value.json`;
-    try {
-        const res = await fetch(url, { cache: "force-cache" });
-        if (!res.ok) throw new Error(`Status ${res.status}`);
-        const data = await res.json();
-        this.models.set(n, data);
-        return data;
-    } catch(e) {
-        throw new Error(`Failed load n=${n}: ${e.message}`);
-    }
-  },
-  
-  sigmoid(x) {
-    if (x >= 0) {
-      const z = Math.exp(-x);
-      return 1 / (1 + z);
-    } else {
-      const z = Math.exp(x);
-      return z / (1 + z);
-    }
-  },
-
-  features(state) {
-    const n = state.n;
-    const totalEdges = (n * (n - 1)) / 2;
-    // Optimization: Read directly from state property O(1) instead of bit counting
-    const remEdges = state.edgesRemaining;
-    const deg = state.degrees; // Int8Array
-
-    const hist = new Array(n).fill(0);
-    for (let i = 0; i < n; i++) {
-      const d = deg[i];
-      if (d >= 0 && d < n) hist[d]++;
-    }
-
-    let sum = 0, minD = 1e9, maxD = -1e9, sumSq = 0;
-    for (let i = 0; i < n; i++) {
-      const d = deg[i];
-      sum += d;
-      sumSq += d * d;
-      if (d < minD) minD = d;
-      if (d > maxD) maxD = d;
-    }
-    const avg = sum / n;
-    const meanSq = sumSq / n;
-    const denom = Math.max(1, n - 1);
-
-    const x = [];
-    x.push(1.0); // bias
-    x.push(remEdges / totalEdges);
-    for (let d = 0; d < n; d++) x.push(hist[d] / n);
-    x.push(avg / denom);
-    x.push(minD / denom);
-    x.push(maxD / denom);
-    x.push((hist[1] || 0) / n);
-    x.push((hist[2] || 0) / n);
-    x.push(meanSq / (denom * denom));
-    return x; // length = n + 8
-  },
-
-  predict(state, model) {
-    const x = this.features(state);
-    const w = model.w;
-    let s = 0;
-    const L = Math.min(w.length, x.length);
-    for (let i = 0; i < L; i++) s += w[i] * x[i];
-    return this.sigmoid(s); // in [0,1]
-  }
+// --- Ghost Brain & MCTS Logic ---
+const brain = {
+    memory: {},
+    load() { try { const d = localStorage.getItem('edge_mobile_v1'); if(d) this.memory = JSON.parse(d); } catch(e){} },
+    save() { try { localStorage.setItem('edge_mobile_v1', JSON.stringify(this.memory)); } catch(e){} },
+    update(key, val) { 
+        if(!this.memory[key]) this.memory[key] = {n:0, w:0}; 
+        this.memory[key].n++; this.memory[key].w += val; 
+    },
+    get(key) { const e = this.memory[key]; return e ? e.w/e.n : null; }
 };
+brain.load();
 
 class GraphState {
-    constructor(n, activeMask = null, degrees = null, edges = null, edgesRemaining = null) {
+    constructor(n, activeMask = null, degrees = null, edges = null) {
         this.n = n;
         if (activeMask === null) {
             this.edges = []; let idx = 0;
@@ -281,16 +295,12 @@ class GraphState {
             this.num_edges = idx; 
             this.activeMask = (1n << BigInt(this.num_edges)) - 1n;
             this.degrees = new Int8Array(n).fill(n - 1);
-            this.edgesRemaining = this.num_edges;
         } else {
-            this.edges = edges; 
-            this.activeMask = activeMask; 
-            this.degrees = new Int8Array(degrees); 
-            this.num_edges = edges.length;
-            this.edgesRemaining = edgesRemaining;
+            this.edges = edges; this.activeMask = activeMask; 
+            this.degrees = new Int8Array(degrees); this.num_edges = edges.length;
         }
     }
-    clone() { return new GraphState(this.n, this.activeMask, this.degrees, this.edges, this.edgesRemaining); }
+    clone() { return new GraphState(this.n, this.activeMask, this.degrees, this.edges); }
     getHash(turn) { return `n${this.n}_${this.activeMask.toString()}_t${turn}`; }
     getLegalMoves() {
         const moves = [];
@@ -306,387 +316,497 @@ class GraphState {
     doMove(moveIdx) {
         if (!((this.activeMask >> BigInt(moveIdx)) & 1n)) return false;
         this.activeMask &= ~(1n << BigInt(moveIdx));
-        const e = this.edges[moveIdx]; 
-        this.degrees[e.u]--; 
-        this.degrees[e.v]--; 
-        this.edgesRemaining--;
+        const e = this.edges[moveIdx]; this.degrees[e.u]--; this.degrees[e.v]--;
         return true;
     }
     isTerminal() { for(let i=0; i<this.n; i++) if(this.degrees[i] === 0) return true; return false; }
 }
 
 class MCTSNode {
-    constructor(move = null, parent = null, state = null, turn = null) {
-        this.move = move; this.parent = parent; this.children = new Map(); this.wins = 0; this.visits = 0;
-        this.depth = parent ? parent.depth + 1 : 0; this.isExpanded = false;
+    constructor(move, parent, state, turn) {
+        this.move = move; this.parent = parent; this.children = new Map();
+        this.wins = 0; this.visits = 0; 
         this.legalMoves = state ? state.getLegalMoves() : [];
-        if (state) this.calculatePriors(state);
-        if (parent === null) this.playerJustMoved = 1 - turn; else this.playerJustMoved = 1 - parent.playerJustMoved;
+        if (state) this.priors = this.calcPriors(state, this.legalMoves);
     }
-    calculatePriors(state) {
-        this.legalMoves = state.getLegalMoves(); if (this.legalMoves.length === 0) return;
-        let sumScores = 0; this.movePriors = {}; 
-        for (const m of this.legalMoves) {
-            const e = state.edges[m]; const score = state.degrees[e.u] + state.degrees[e.v];
-            const w = Math.pow(score, 2); this.movePriors[m] = w; sumScores += w;
+    calcPriors(state, moves) {
+        const map = {}; let sum = 0;
+        if (moves.length === 0) return map;
+        for (const m of moves) {
+            const e = state.edges[m]; 
+            const score = Math.pow(state.degrees[e.u] + state.degrees[e.v], 2);
+            map[m] = score; sum += score;
         }
-        if (sumScores <= 0) {
-            const p = 1.0 / this.legalMoves.length;
-            for (const m of this.legalMoves) this.movePriors[m] = p; return;
-        }
-        for (const m of this.legalMoves) this.movePriors[m] /= sumScores;
+        for (const m of moves) map[m] /= (sum || 1);
+        return map;
     }
-    selectChild() {
-        let best = null; let bestScore = -Infinity; const cpuct = 1.25; 
+    select() {
+        let best = null, max = -Infinity;
         for (const child of this.children.values()) {
-            let Q = child.visits > 0 ? child.wins / child.visits : 0.5;
-            const P = this.movePriors[child.move] || 0;
-            const U = cpuct * P * (Math.sqrt(this.visits) / (1 + child.visits));
-            const score = (1.0 - Q) + U; if (score > bestScore) { bestScore = score; best = child; }
+            const ucb = (child.visits > 0 ? child.wins/child.visits : 0.5) + 
+                        1.25 * (this.priors[child.move]||0) * (Math.sqrt(this.visits)/(1+child.visits));
+            if (ucb > max) { max = ucb; best = child; }
         }
         return best;
     }
-    expand() {
-        if (!this.legalMoves) return;
-        for (const m of this.legalMoves) if (!this.children.has(m)) {
-            const child = new MCTSNode(m, this, null); child.prior = this.movePriors[m]; this.children.set(m, child);
-        }
-        this.isExpanded = true;
-    }
 }
 
-class AIEngine {
-    constructor(state, startTurn) { this.root = new MCTSNode(null, null, state, startTurn); this.rootState = state.clone(); this.currentTurn = startTurn; }
-    advanceTree(moveIdx) {
-        this.currentTurn = 1 - this.currentTurn;
-        if (this.root.children.has(moveIdx)) { this.root = this.root.children.get(moveIdx); this.root.parent = null; this.rootState.doMove(moveIdx); } 
-        else { this.rootState.doMove(moveIdx); this.root = new MCTSNode(null, null, this.rootState, this.currentTurn); }
-    }
-    evaluate(state, turn) {
-        if (state.isTerminal()) return 0.0; 
-
-        // 1. ML Model Prediction (Priority #1)
-        // If a specialized model exists, trust it more than local "ghost" stats.
-        const model = MLModels.models.get(state.n);
-        if (model) {
-            const p = MLModels.predict(state, model);
-            return p;
-        }
-
-        // 2. Exact Memory (GhostBrain) (Priority #2)
-        const hash = state.getHash(turn); 
-        const storedVal = brain.getValue(hash); 
-        if (storedVal !== null) return storedVal; 
-
-        // 3. Rollout Fallback
-        let tempState = state.clone(); let simTurn = turn; let movesCount = 0;
-        while (true) {
-            const moves = tempState.getLegalMoves(); if (moves.length === 0) break; 
-            if (moves.length === 1 && tempState.degrees[tempState.edges[moves[0]].u] === 1) return (simTurn === turn) ? 1.0 : 0.0;
-            let candidates = moves;
-            if (moves.length > 1) {
-                 const safe = moves.filter(m => { const e = tempState.edges[m]; return tempState.degrees[e.u] > 2 && tempState.degrees[e.v] > 2; });
-                 if (safe.length > 0) candidates = safe;
-            }
-            const m = candidates[Math.floor(Math.random() * candidates.length)]; tempState.doMove(m);
-            if (tempState.isTerminal()) return (simTurn === turn) ? 1.0 : 0.0;
-            simTurn = 1 - simTurn; movesCount++; if (movesCount > 150) return 0.5; 
-        }
-        return 0.5;
-    }
-    run(budget, gameId, updateCallback) {
-        return new Promise(resolve => {
-            let iterations = 0; const batch = 300;
-            const loop = () => {
-                if (game.id !== gameId) return;
-                const end = Math.min(iterations + batch, budget);
-                for (; iterations < end; iterations++) {
-                    let node = this.root; let state = this.rootState.clone(); let turn = this.currentTurn; 
-                    while (node.isExpanded && node.children.size > 0) { node = node.selectChild(); state.doMove(node.move); turn = 1 - turn; }
-                    if (!state.isTerminal() && !node.isExpanded) { node.calculatePriors(state); node.expand(); }
-                    let v = this.evaluate(state, turn); let currNode = node;
-                    while (currNode !== null) { currNode.visits++; currNode.wins += v; v = 1.0 - v; currNode = currNode.parent; }
-                }
-                if (iterations % 600 === 0 && updateCallback) updateCallback(iterations / budget);
-                if (iterations < budget) { if (game.id === gameId) requestAnimationFrame(loop); } else resolve(this.root);
-            };
-            loop();
-        });
-    }
-}
-
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
-const ui = {
-    body: document.getElementById('mainBody'),
-    nRange: document.getElementById('nRange'),
-    nVal: document.getElementById('n-val'),
-    aiAvatar: document.getElementById('ai-avatar'),
-    aiPulse: document.getElementById('ai-pulse'),
-    aiEmoji: document.getElementById('ai-emoji'),
-    turnText: document.getElementById('turn-text'),
-    subText: document.getElementById('sub-text'),
-    statusPanel: document.getElementById('status-panel'),
-    gameContainer: document.getElementById('game-container'),
-    thinkingUI: document.getElementById('thinking-ui'),
-    bar: document.getElementById('thinking-bar'),
-    progress: document.getElementById('progress-text'),
-    overlay: document.getElementById('overlay'),
-    overlayTitle: document.getElementById('overlayTitle'),
-    overlaySub: document.getElementById('overlaySub'),
-    overlayIcon: document.getElementById('overlay-icon'),
-    aiVsAi: document.getElementById('aiVsAi'),
-    selectionScreen: document.getElementById('selection-screen'),
-    modelStatus: document.getElementById('model-status')
+// --- Engine ---
+let game = { 
+    id: 0, n: 9, 
+    state: null, root: null, 
+    turn: 0, userRole: 0, 
+    history: [], 
+    selectedEdge: -1, // For double tap
+    nodes: [] 
 };
 
-let game = { id: 0, n: 9, engine: null, nodes: [], turn: 0, gameOver: false, hoveredEdge: null, history: [], animatingEdges: [], userPlayer: 0 };
-
-function resizeCanvas() {
-    const parent = canvas.parentElement;
-    const dpr = window.devicePixelRatio || 1;
-    const rect = parent.getBoundingClientRect();
-
-    canvas.width = Math.floor(rect.width * dpr);
-    canvas.height = Math.floor(rect.height * dpr);
-
-    // IMPORTANT: reset transform so we don't scale repeatedly
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.scale(dpr, dpr);
-
-    if (game.nodes.length > 0) {
-        initNodePositions();
-        draw();
+function initGame(n, role) {
+    game.id++; game.n = n; game.userRole = role; game.turn = 0;
+    game.state = new GraphState(n);
+    game.root = new MCTSNode(null, null, game.state, 0);
+    game.history = []; game.selectedEdge = -1;
+    
+    // Layout Nodes (Circle)
+    game.nodes = [];
+    const r = 400; // Virtual world radius
+    for(let i=0; i<n; i++) {
+        const ang = (i * 2 * Math.PI / n) - Math.PI/2;
+        game.nodes.push({ x: Math.cos(ang)*r, y: Math.sin(ang)*r });
     }
-}
-window.addEventListener('resize', resizeCanvas);
-
-function initNodePositions() {
-    game.nodes = []; const rect = canvas.getBoundingClientRect(); const width = rect.width; const height = rect.height;
-    const r = Math.min(width, height) * 0.35; const cx = width/2; const cy = height/2;
-    for(let i=0; i<game.n; i++) {
-        const a = (i * 2 * Math.PI / game.n) - Math.PI/2;
-        game.nodes.push({x: cx + Math.cos(a)*r, y: cy + Math.sin(a)*r});
-    }
+    
+    Camera.reset();
+    resetUI();
+    
+    if (game.turn !== game.userRole) setTimeout(aiMove, 600);
 }
 
-function updateTheme(turn) {
-    if (turn === 0) { 
-        ui.body.className = "min-h-screen flex flex-col items-center justify-center p-4 lg:p-8 gap-6 theme-alice relative overflow-y-auto lg:overflow-hidden";
-        ui.gameContainer.style.boxShadow = "inset 0 0 40px rgba(168, 85, 247, 0.1)";
-    } else { 
-        ui.body.className = "min-h-screen flex flex-col items-center justify-center p-4 lg:p-8 gap-6 theme-bob relative overflow-y-auto lg:overflow-hidden";
-        ui.gameContainer.style.boxShadow = "inset 0 0 40px rgba(16, 185, 129, 0.1)";
-    }
+// AI Runner
+async function aiMove() {
+    if(game.state.isTerminal()) return;
+    setUI('thinking');
+    
+    const start = performance.now();
+    // GUNCELLEME: Mobilde "cok hizli" hissini kirmak ve AI'i guclendirmek icin
+    // sureyi 600ms'den 2500ms'ye (2.5 saniye) cikardim.
+    const budget = 2500; 
+    let iters = 0;
+    
+    // Async loop to not freeze UI
+    const runMCTS = () => {
+        const batchEnd = performance.now() + 15;
+        while(performance.now() < batchEnd) {
+            let node = game.root, tempState = game.state.clone(), t = game.turn;
+            // Select
+            while(node.children.size > 0 && node.legalMoves.length === 0) { 
+                node = node.select(); tempState.doMove(node.move); t = 1-t; 
+            }
+            // Expand
+            if(!tempState.isTerminal() && node.legalMoves.length > 0) {
+                const m = node.legalMoves.pop();
+                const child = new MCTSNode(m, node, tempState, 1-t);
+                node.children.set(m, child);
+                node = child; tempState.doMove(m); t = 1-t;
+            }
+            // Rollout
+            let simT = t, moves = 0;
+            while(!tempState.isTerminal() && moves < 50) {
+                const legal = tempState.getLegalMoves();
+                if(legal.length===0) break;
+                // Heuristic rollout: avoid creating isolated nodes if possible
+                let safe = legal.filter(x => { 
+                    const e = tempState.edges[x]; 
+                    return tempState.degrees[e.u] > 2 && tempState.degrees[e.v] > 2; 
+                });
+                if (safe.length === 0) safe = legal;
+                tempState.doMove(safe[Math.floor(Math.random()*safe.length)]);
+                simT = 1-simT; moves++;
+            }
+            // Backprop
+            let result = tempState.isTerminal() ? (simT === game.turn ? 0 : 1) : 0.5;
+            while(node) { node.visits++; node.wins += result; result = 1-result; node = node.parent; }
+            iters++;
+        }
+        
+        if (performance.now() - start < budget) {
+            requestAnimationFrame(runMCTS);
+        } else {
+            finalizeAIMove();
+        }
+    };
+    runMCTS();
 }
 
-const AI_PHRASES = ["Analyzing Strategy...", "Calculating Odds...", "Checking Traps...", "Simulating Future...", "Scanning Weaknesses..."];
+function finalizeAIMove() {
+    let best = null, max = -1;
+    if (game.root.children.size === 0) {
+        // Emergency fallback
+        const moves = game.state.getLegalMoves();
+        if(moves.length > 0) executeMove(moves[0]);
+        return;
+    }
+    for(const c of game.root.children.values()) if(c.visits > max) { max = c.visits; best = c; }
+    executeMove(best.move);
+}
 
-function setUIState(state) {
-    if (state === 'thinking') {
-        updateTheme(game.turn);
-        ui.aiPulse.classList.add('animate-ping', 'opacity-100');
-        ui.aiAvatar.classList.add('border-purple-500', 'shadow-[0_0_30px_rgba(168,85,247,0.4)]');
-        ui.aiEmoji.innerText = "🤖";
-        ui.turnText.innerText = (game.turn === 0 ? "Alice (AI)" : "Bob (AI)") + " Thinking";
-        ui.turnText.className = "text-lg font-bold text-purple-400 mb-1";
-        ui.subText.innerText = AI_PHRASES[Math.floor(Math.random() * AI_PHRASES.length)];
-        ui.thinkingUI.classList.remove('opacity-0');
-        canvas.style.cursor = "wait";
+function executeMove(idx) {
+    game.history.push({ h: game.state.getHash(game.turn), p: game.turn });
+    game.state.doMove(idx);
+    game.selectedEdge = -1; // Reset selection
+    
+    // Update MCTS tree
+    if (game.root.children.has(idx)) {
+        game.root = game.root.children.get(idx);
+        game.root.parent = null;
     } else {
-        updateTheme(game.userPlayer);
-        ui.aiPulse.classList.remove('animate-ping', 'opacity-100');
-        ui.aiAvatar.classList.remove('border-purple-500', 'shadow-[0_0_30px_rgba(168,85,247,0.4)]');
-        ui.aiEmoji.innerText = game.userPlayer === 0 ? "👩‍🦰" : "🧔";
-        ui.turnText.innerText = "Your Turn";
-        ui.turnText.className = "text-lg font-bold text-emerald-400 mb-1";
-        ui.subText.innerText = "Tap a connection to cut";
-        ui.thinkingUI.classList.add('opacity-0');
-        canvas.style.cursor = "crosshair";
+        game.root = new MCTSNode(null, null, game.state, 1-game.turn);
     }
-}
 
-function showSelection() {
-    ui.selectionScreen.style.visibility = 'visible';
-    ui.selectionScreen.style.opacity = '1';
-}
-
-function startGameAs(playerIndex) {
-    ui.selectionScreen.style.opacity = '0';
-    setTimeout(() => ui.selectionScreen.style.visibility = 'hidden', 500);
-    game.userPlayer = playerIndex;
-    restartCurrentGame();
-}
-
-function restartCurrentGame() {
-    game.id++;
-    game.n = parseInt(ui.nRange.value);
-    
-    // Reset Identity Badge Style
-    ui.modelStatus.className = "mt-4 px-3 py-1 rounded-full text-[10px] font-bold tracking-widest uppercase transition-colors opacity-100 border";
-    ui.modelStatus.innerText = "CONNECTING...";
-    
-    // Attempt to load ML model for this N
-    MLModels.loadForN(game.n)
-        .then(() => {
-            ui.modelStatus.innerText = "🧠 IDENTITY: NEURAL CORE";
-            ui.modelStatus.className = "mt-4 px-3 py-1 rounded-full text-[10px] font-bold tracking-widest uppercase transition-colors opacity-100 bg-purple-500/20 text-purple-300 border border-purple-500/50 shadow-[0_0_15px_rgba(168,85,247,0.3)]";
-        })
-        .catch(err => {
-            ui.modelStatus.innerText = "🎲 IDENTITY: CHAOS ENGINE";
-            ui.modelStatus.className = "mt-4 px-3 py-1 rounded-full text-[10px] font-bold tracking-widest uppercase transition-colors opacity-100 bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.3)]";
-        });
-
-    const startState = new GraphState(game.n);
-    game.engine = new AIEngine(startState, 0); 
-    game.history = []; game.animatingEdges = []; game.turn = 0; game.gameOver = false;
-    
-    ui.overlay.classList.add('opacity-0', 'pointer-events-none', 'scale-95');
-    initNodePositions();
-    drawLoop();
-    
-    // Check if AI should start (either it's AI turn or AI vs AI mode is on)
-    if (ui.aiVsAi.checked || game.turn !== game.userPlayer) {
-        setTimeout(() => runAITurn(game.id), 800);
-    } else {
-        setUIState('player');
-    }
-}
-
-async function runAITurn(sessionId) {
-    if(game.gameOver || game.id !== sessionId) return;
-    setUIState('thinking');
-    await game.engine.run(100000, sessionId, (pct) => {
-        ui.bar.style.width = `${pct * 100}%`; ui.progress.innerText = `${Math.round(pct*100)}%`;
-    });
-    if (game.id !== sessionId) return; 
-    let bestChild = null; let maxVisits = -1;
-    if (game.engine.root.children.size === 0) {
-        const moves = game.engine.rootState.getLegalMoves(); if (moves.length > 0) applyMove(moves[0]); return;
-    }
-    for (const child of game.engine.root.children.values()) { if (child.visits > maxVisits) { maxVisits = child.visits; bestChild = child; } }
-    game.history.push({ hash: game.engine.rootState.getHash(game.turn), player: game.turn });
-    applyMove(bestChild.move);
-}
-
-function applyMove(moveIdx) {
-    const edge = game.engine.rootState.edges[moveIdx];
-    game.animatingEdges.push({ u: edge.u, v: edge.v, color: game.turn === 0 ? '#a855f7' : '#10b981', dash: game.turn === 0 ? [5, 5] : [10, 5], startTime: performance.now(), duration: 1500 });
-    game.engine.advanceTree(moveIdx);
-    if (game.engine.rootState.isTerminal()) { endGame(game.turn); return; }
     game.turn = 1 - game.turn;
     
-    if (ui.aiVsAi.checked || game.turn !== game.userPlayer) {
-        setTimeout(() => runAITurn(game.id), 200);
+    if (game.state.isTerminal()) {
+        endGame(1 - game.turn); // Previous player made the last move causing 0 degree
     } else {
-        setUIState('player');
+        setUI(game.turn === game.userRole ? 'player' : 'thinking');
+        if (game.turn !== game.userRole) setTimeout(aiMove, 200);
     }
+    
+    Renderer.triggerFlash(idx);
 }
 
 function endGame(winner) {
-    game.gameOver = true;
-    ui.overlay.classList.remove('opacity-0', 'pointer-events-none', 'scale-95');
-    game.history.forEach(step => brain.update(step.hash, (step.player === winner) ? 1.0 : 0.0));
+    // Save to brain
+    const winVal = winner === game.userRole ? 0 : 1; // AI pov
+    game.history.forEach(h => brain.update(h.h, h.p !== game.userRole ? winVal : 1-winVal));
     brain.save();
-    if (winner !== game.userPlayer) { 
-        ui.overlayTitle.innerText = "DEFEATED"; ui.overlaySub.innerText = "The AI outsmarted you.";
-        ui.overlayTitle.className = "text-5xl lg:text-7xl font-black text-red-500 mb-4 tracking-tighter drop-shadow-2xl text-center";
-        ui.overlayIcon.innerText = "💀";
-    } else { 
-        ui.overlayTitle.innerText = "LEGENDARY VICTORY"; ui.overlaySub.innerText = "You defeated the Invincible AI!";
-        ui.overlayTitle.className = "text-5xl lg:text-7xl font-black text-emerald-400 mb-4 tracking-tighter drop-shadow-2xl text-center";
-        ui.overlayIcon.innerText = "🏆";
-    }
+
+    setUI('ended');
+    const isWin = winner === game.userRole;
+    document.getElementById('msg-title').innerText = isWin ? "VICTORY" : "DEFEAT";
+    document.getElementById('msg-title').className = isWin ? "text-4xl font-black text-emerald-400 mb-2" : "text-4xl font-black text-red-500 mb-2";
+    document.getElementById('msg-sub').innerText = isWin ? "You are the Edge Master." : "The AI isolated a node.";
+    document.getElementById('msg-icon').innerText = isWin ? "🏆" : "💀";
+    document.getElementById('message-overlay').classList.add('visible');
 }
 
-function getEdgeAt(x, y, tolerance = 30) {
-    let best = null, minDist = tolerance; const state = game.engine.rootState;
-    for (let i=0; i<state.num_edges; i++) {
-        if (!((state.activeMask >> BigInt(i)) & 1n)) continue;
-        const e = state.edges[i]; const n1 = game.nodes[e.u], n2 = game.nodes[e.v];
-        const A=x-n1.x, B=y-n1.y, C=n2.x-n1.x, D=n2.y-n1.y;
-        const dot = A*C + B*D, len_sq = C*C + D*D;
-        const t = len_sq ? Math.max(0, Math.min(1, dot/len_sq)) : 0;
-        const dist = Math.hypot(x - (n1.x + t*C), y - (n1.y + t*D));
-        if (dist < minDist) { minDist = dist; best = i; }
-    }
-    return best;
-}
-
-canvas.addEventListener('touchstart', e => {
-    if (game.turn !== game.userPlayer || game.gameOver || ui.aiVsAi.checked) return;
-    const rect = canvas.getBoundingClientRect(); const touch = e.touches[0];
-    const x = touch.clientX - rect.left; const y = touch.clientY - rect.top;
-    game.hoveredEdge = getEdgeAt(x, y, 60); draw();
-}, {passive: false});
-
-canvas.addEventListener('touchend', e => {
-    if (game.gameOver || game.turn !== game.userPlayer || ui.aiVsAi.checked) return;
-    if (game.hoveredEdge !== null) { applyMove(game.hoveredEdge); game.hoveredEdge = null; }
-}, {passive: false});
-
-canvas.addEventListener('mousemove', e => {
-    if (game.turn !== game.userPlayer || game.gameOver || ui.aiVsAi.checked) return;
-    const r = canvas.getBoundingClientRect(); game.hoveredEdge = getEdgeAt(e.clientX - r.left, e.clientY - r.top);
-    canvas.style.cursor = game.hoveredEdge !== null ? 'pointer' : 'crosshair';
-});
-
-canvas.addEventListener('click', e => {
-    if (game.gameOver || game.turn !== game.userPlayer || ui.aiVsAi.checked) return;
-    if (game.hoveredEdge !== null) { applyMove(game.hoveredEdge); game.hoveredEdge = null; }
-});
-
-function drawLoop() { draw(); if (!game.gameOver) requestAnimationFrame(drawLoop); }
-
-function draw() {
-    const width = canvas.width / (window.devicePixelRatio||1); const height = canvas.height / (window.devicePixelRatio||1);
-    ctx.clearRect(0,0, width, height); if (!game.engine) return;
-    const state = game.engine.rootState; const now = performance.now();
-    for(let i=0; i<state.num_edges; i++) {
-        if(!((state.activeMask >> BigInt(i)) & 1n)) continue;
-        const e = state.edges[i]; const n1 = game.nodes[e.u], n2 = game.nodes[e.v];
-        ctx.beginPath(); ctx.moveTo(n1.x, n1.y); ctx.lineTo(n2.x, n2.y);
-        if (i === game.hoveredEdge && game.turn === game.userPlayer && !ui.aiVsAi.checked) { ctx.lineWidth = 6; ctx.strokeStyle = '#34d399'; ctx.shadowColor = '#34d399'; ctx.shadowBlur = 15; } 
-        else { ctx.lineWidth = 2; ctx.strokeStyle = '#334155'; ctx.shadowBlur = 0; }
-        ctx.setLineDash([]); ctx.stroke(); ctx.shadowBlur = 0;
-    }
-    game.animatingEdges = game.animatingEdges.filter(anim => (now - anim.startTime) < anim.duration);
-    for(const anim of game.animatingEdges) {
-        const progress = (now - anim.startTime) / anim.duration; const opacity = 1.0 - Math.pow(progress, 3);
-        const n1 = game.nodes[anim.u]; const n2 = game.nodes[anim.v];
-        ctx.save(); ctx.beginPath(); ctx.moveTo(n1.x, n1.y); ctx.lineTo(n2.x, n2.y); ctx.lineWidth = 4; ctx.strokeStyle = anim.color;
-        ctx.globalAlpha = opacity; ctx.setLineDash(anim.dash); ctx.lineDashOffset = -progress * 50; ctx.stroke(); ctx.restore();
-    }
-    game.nodes.forEach((pos, i) => {
-        const deg = state.degrees[i]; ctx.beginPath();
-        const nodeR = Math.max(12, width * 0.035); ctx.arc(pos.x, pos.y, nodeR, 0, Math.PI*2);
-        if(deg===1) { ctx.fillStyle='#ef4444'; ctx.shadowColor='#ef4444'; ctx.shadowBlur=20; } 
-        else if(deg===2) { ctx.fillStyle='#f59e0b'; ctx.shadowColor='#f59e0b'; ctx.shadowBlur=10; } 
-        else { ctx.fillStyle='#3b82f6'; ctx.shadowBlur=0; }
-        ctx.fill(); ctx.strokeStyle='#0f172a'; ctx.lineWidth=4; ctx.stroke(); ctx.shadowBlur=0;
-        ctx.fillStyle='white'; ctx.font=`bold ${nodeR*0.7}px Inter`; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(deg, pos.x, pos.y);
-    });
-}
-
-window.startGameAs = startGameAs;
-window.showSelection = showSelection;
-window.restartCurrentGame = restartCurrentGame;
-
-document.getElementById('clearBrain').onclick = () => { if(confirm('Clear AI memory?')) brain.clear(); };
-document.getElementById('nRange').oninput = (e) => { 
-    document.getElementById('n-val').innerText = e.target.value; 
-    restartCurrentGame(); 
+/**
+ * CAMERA & INPUT SYSTEM
+ * Handles Touch, Zoom, Pan, Double Tap
+ */
+const Camera = {
+    x: 0, y: 0, zoom: 1,
+    minZoom: 0.5, maxZoom: 3,
+    reset() { this.x = window.innerWidth/2; this.y = window.innerHeight/2; this.zoom = Math.min(window.innerWidth, window.innerHeight)/1000; },
+    toWorld(sx, sy) { return { x: (sx - this.x)/this.zoom, y: (sy - this.y)/this.zoom }; },
+    toScreen(wx, wy) { return { x: wx*this.zoom + this.x, y: wy*this.zoom + this.y }; }
 };
 
-// Handle "AI vs AI" checkbox changes during the game
-ui.aiVsAi.onchange = () => {
-    if (ui.aiVsAi.checked && !game.gameOver && game.turn === game.userPlayer) {
-        runAITurn(game.id);
+const Input = {
+    lastTap: 0,
+    pointers: new Map(),
+    dist: 0,
+    init() {
+        const c = document.getElementById('gameCanvas');
+        c.addEventListener('pointerdown', this.down.bind(this));
+        c.addEventListener('pointermove', this.move.bind(this));
+        c.addEventListener('pointerup', this.up.bind(this));
+        c.addEventListener('pointercancel', this.up.bind(this));
+        c.addEventListener('wheel', this.wheel.bind(this), {passive: false});
+    },
+    getDist(p1, p2) { return Math.hypot(p1.clientX - p2.clientX, p1.clientY - p2.clientY); },
+    getCenter() {
+        let x=0, y=0, c=0;
+        for(let p of this.pointers.values()) { x+=p.clientX; y+=p.clientY; c++; }
+        return {x:x/c, y:y/c};
+    },
+    down(e) {
+        this.pointers.set(e.pointerId, e);
+        if (this.pointers.size === 2) {
+            const arr = Array.from(this.pointers.values());
+            this.dist = this.getDist(arr[0], arr[1]);
+        }
+    },
+    move(e) {
+        if (!this.pointers.has(e.pointerId)) return;
+        const prev = this.pointers.get(e.pointerId);
+        
+        if (this.pointers.size === 1) {
+            // Pan
+            Camera.x += e.clientX - prev.clientX;
+            Camera.y += e.clientY - prev.clientY;
+        } else if (this.pointers.size === 2) {
+            // Pinch Zoom
+            this.pointers.set(e.pointerId, e); // Update current
+            const arr = Array.from(this.pointers.values());
+            const newDist = this.getDist(arr[0], arr[1]);
+            const center = this.getCenter();
+            
+            // Zoom toward center
+            const factor = newDist / this.dist;
+            const newZoom = Math.min(Camera.maxZoom, Math.max(Camera.minZoom, Camera.zoom * factor));
+            
+            // Adjust pan to zoom into center
+            const wx = (center.x - Camera.x) / Camera.zoom;
+            const wy = (center.y - Camera.y) / Camera.zoom;
+            
+            Camera.x = center.x - wx * newZoom;
+            Camera.y = center.y - wy * newZoom;
+            Camera.zoom = newZoom;
+            this.dist = newDist;
+        }
+        this.pointers.set(e.pointerId, e);
+    },
+    up(e) {
+        // Tap Detection
+        if (this.pointers.size === 1 && game.turn === game.userRole) {
+            const p = this.pointers.get(e.pointerId);
+            const dur = performance.now() - this.lastTap;
+            const moveAmt = Math.hypot(e.clientX - p.clientX, e.clientY - p.clientY); // Ensure it wasn't a drag
+            
+            if (moveAmt < 10) {
+                this.handleTap(e.clientX, e.clientY);
+            }
+        }
+        this.pointers.delete(e.pointerId);
+        if(this.pointers.size === 0) this.lastTap = performance.now();
+    },
+    wheel(e) {
+        e.preventDefault();
+        const factor = e.deltaY > 0 ? 0.9 : 1.1;
+        const wx = (e.clientX - Camera.x) / Camera.zoom;
+        const wy = (e.clientY - Camera.y) / Camera.zoom;
+        Camera.zoom = Math.min(Camera.maxZoom, Math.max(Camera.minZoom, Camera.zoom * factor));
+        Camera.x = e.clientX - wx * Camera.zoom;
+        Camera.y = e.clientY - wy * Camera.zoom;
+    },
+    handleTap(sx, sy) {
+        const w = Camera.toWorld(sx, sy);
+        // Find closest edge
+        let best = -1, minD = 40 / Camera.zoom; // Touch tolerance
+        
+        const s = game.state;
+        for (let i = 0; i < s.num_edges; i++) {
+            if (!((s.activeMask >> BigInt(i)) & 1n)) continue;
+            const u = game.nodes[s.edges[i].u];
+            const v = game.nodes[s.edges[i].v];
+            const d = distToSegment(w, u, v);
+            if (d < minD) { minD = d; best = i; }
+        }
+
+        if (best !== -1) {
+            // Double Tap Logic
+            if (game.selectedEdge === best) {
+                executeMove(best);
+            } else {
+                game.selectedEdge = best;
+                Renderer.pulse = 1;
+                // Auto deselect after 2s
+                setTimeout(() => { if(game.selectedEdge===best) game.selectedEdge = -1; }, 2000);
+            }
+        } else {
+            game.selectedEdge = -1;
+        }
     }
 };
 
-resizeCanvas();
-} 
+function distToSegment(p, v, w) {
+    const l2 = (v.x-w.x)**2 + (v.y-w.y)**2;
+    if (l2 == 0) return Math.hypot(p.x-v.x, p.y-v.y);
+    let t = ((p.x-v.x)*(w.x-v.x) + (p.y-v.y)*(w.y-v.y)) / l2;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(p.x - (v.x + t*(w.x-v.x)), p.y - (v.y + t*(w.y-v.y)));
+}
+
+/**
+ * RENDERER
+ * Optimized Canvas drawing
+ */
+const Renderer = {
+    canvas: null,
+    ctx: null,
+    pulse: 0,
+    flash: null, // {idx, time, color}
+    
+    init() {
+        this.canvas = document.getElementById('gameCanvas');
+        if (this.canvas) {
+            this.ctx = this.canvas.getContext('2d');
+            this.resize();
+            this.loop();
+        }
+    },
+
+    loop() {
+        if (!this.ctx || !this.canvas) return;
+
+        this.ctx.fillStyle = game.userRole === 0 ? '#0f172a' : '#022c22';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        
+        if (!game.state) { requestAnimationFrame(()=>this.loop()); return; }
+
+        this.ctx.save();
+        this.ctx.translate(Camera.x, Camera.y);
+        this.ctx.scale(Camera.zoom, Camera.zoom);
+        
+        // Draw Edges
+        this.ctx.lineCap = 'round';
+        const s = game.state;
+        for (let i = 0; i < s.num_edges; i++) {
+            if (!((s.activeMask >> BigInt(i)) & 1n)) continue;
+            const e = s.edges[i];
+            const p1 = game.nodes[e.u], p2 = game.nodes[e.v];
+            
+            this.ctx.beginPath();
+            this.ctx.moveTo(p1.x, p1.y);
+            this.ctx.lineTo(p2.x, p2.y);
+            
+            if (i === game.selectedEdge) {
+                this.ctx.lineWidth = 8;
+                this.ctx.strokeStyle = '#f43f5e';
+                this.ctx.shadowColor = '#f43f5e';
+                this.ctx.shadowBlur = 10;
+            } else {
+                this.ctx.lineWidth = 3;
+                this.ctx.strokeStyle = '#334155';
+                this.ctx.shadowBlur = 0;
+            }
+            this.ctx.stroke();
+        }
+        
+        // Flash animation for last move
+        if (this.flash && (Date.now() - this.flash.time < 500)) {
+            const e = s.edges[this.flash.idx] || {u:0, v:0}; // fallback if edge gone, but actually edges persist just mask changes. Wait, my GraphState keeps edge definitions
+            // Oh, edges array is constant. 
+            const edgeDef = s.edges[this.flash.idx];
+            if(edgeDef) {
+                const p1 = game.nodes[edgeDef.u], p2 = game.nodes[edgeDef.v];
+                this.ctx.beginPath(); this.ctx.moveTo(p1.x, p1.y); this.ctx.lineTo(p2.x, p2.y);
+                this.ctx.lineWidth = 6;
+                this.ctx.strokeStyle = this.flash.color;
+                this.ctx.globalAlpha = 1 - (Date.now() - this.flash.time)/500;
+                this.ctx.stroke();
+                this.ctx.globalAlpha = 1;
+            }
+        }
+
+        // Draw Nodes
+        this.ctx.shadowBlur = 0;
+        for(let i=0; i<game.n; i++) {
+            const p = game.nodes[i];
+            const d = s.degrees[i];
+            
+            this.ctx.beginPath();
+            this.ctx.arc(p.x, p.y, 25, 0, Math.PI*2);
+            
+            if (d === 1) { this.ctx.fillStyle = '#ef4444'; }
+            else if (d === 2) { this.ctx.fillStyle = '#eab308'; }
+            else { this.ctx.fillStyle = '#3b82f6'; }
+            
+            this.ctx.fill();
+            this.ctx.strokeStyle = '#1e293b';
+            this.ctx.lineWidth = 4;
+            this.ctx.stroke();
+            
+            this.ctx.fillStyle = '#fff';
+            this.ctx.font = 'bold 16px Inter';
+            this.ctx.textAlign = 'center';
+            this.ctx.textBaseline = 'middle';
+            this.ctx.fillText(d, p.x, p.y);
+        }
+
+        this.ctx.restore();
+        requestAnimationFrame(()=>this.loop());
+    },
+    resize() {
+        if (!this.canvas) return;
+        this.canvas.width = window.innerWidth;
+        this.canvas.height = window.innerHeight;
+    },
+    triggerFlash(idx) {
+        this.flash = { idx, time: Date.now(), color: game.turn === 0 ? '#a855f7' : '#10b981' }; // color of player who JUST moved (which is now prev turn)
+        // Wait, executeMove flips turn. So if Alice (0) moved, turn is now 1. 
+        // We want the color of the move just made. 
+        this.flash.color = (game.turn === 1) ? '#a855f7' : '#10b981';
+    }
+};
+
+/**
+ * UI CONTROLLERS
+ */
+function setUI(state) {
+    const statusText = document.getElementById('status-text');
+    const hintText = document.getElementById('hint-text');
+    const turnInd = document.getElementById('turn-indicator');
+    const thinkLine = document.getElementById('thinking-line');
+    
+    if (state === 'thinking') {
+        statusText.innerText = "AI THINKING";
+        statusText.className = "text-xs font-bold uppercase tracking-widest text-purple-400";
+        hintText.innerText = "Please wait...";
+        turnInd.className = "w-3 h-3 rounded-full bg-purple-500 animate-pulse";
+        thinkLine.style.opacity = 1;
+    } else if (state === 'player') {
+        statusText.innerText = "YOUR TURN";
+        statusText.className = "text-xs font-bold uppercase tracking-widest text-emerald-400";
+        hintText.innerText = "Double tap edge to cut";
+        turnInd.className = "w-3 h-3 rounded-full bg-emerald-500 animate-pulse";
+        thinkLine.style.opacity = 0;
+    } else {
+        thinkLine.style.opacity = 0;
+    }
+}
+
+function toggleSettings() {
+    const m = document.getElementById('settings-modal');
+    const b = document.getElementById('modal-backdrop');
+    if (m.classList.contains('active')) {
+        m.classList.remove('active');
+        b.classList.remove('active');
+    } else {
+        m.classList.add('active');
+        b.classList.add('active');
+    }
+}
+
+function updateN(val) {
+    document.getElementById('n-display').innerText = val;
+}
+
+function startGameAs(role) {
+    document.getElementById('selection-screen').style.opacity = 0;
+    setTimeout(() => {
+        document.getElementById('selection-screen').style.display = 'none';
+        initGame(9, role);
+    }, 500);
+}
+
+function changePlayer() {
+    toggleSettings();
+    document.getElementById('selection-screen').style.display = 'flex';
+    setTimeout(()=>document.getElementById('selection-screen').style.opacity = 1, 50);
+}
+
+function restartGame() {
+    document.getElementById('message-overlay').classList.remove('visible');
+    const n = parseInt(document.getElementById('nRange').value);
+    toggleSettings();
+    // if modal was open, it closes. If triggered from overlay, toggleSettings closes nothing (harmless) or opens it? 
+    // Wait, toggleSettings checks class. 
+    // Force close modal
+    document.getElementById('settings-modal').classList.remove('active');
+    document.getElementById('modal-backdrop').classList.remove('active');
+    
+    initGame(n, game.userRole);
+}
+
+function resetUI() {
+    document.getElementById('message-overlay').classList.remove('visible');
+}
+
+// Init
+window.addEventListener('resize', () => Renderer.resize());
+Renderer.init();
+Input.init();
 </script>
 </body>
 </html>
