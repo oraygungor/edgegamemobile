@@ -268,543 +268,768 @@
     </div>
 
 <script>
-/**
- * CORE LOGIC (AI & Game State)
- * Same robust logic as before, optimized for mobile execution
- */
+/* =========================
+   SMART CORE (ML + MCTS)
+   Drop-in replacement script
+   ========================= */
 
-// --- Ghost Brain & MCTS Logic ---
-const brain = {
-    memory: {},
-    load() { try { const d = localStorage.getItem('edge_mobile_v1'); if(d) this.memory = JSON.parse(d); } catch(e){} },
-    save() { try { localStorage.setItem('edge_mobile_v1', JSON.stringify(this.memory)); } catch(e){} },
-    update(key, val) { 
-        if(!this.memory[key]) this.memory[key] = {n:0, w:0}; 
-        this.memory[key].n++; this.memory[key].w += val; 
-    },
-    get(key) { const e = this.memory[key]; return e ? e.w/e.n : null; }
+/** ---------- Ghost Brain ---------- **/
+class GhostBrain {
+  constructor(key = "edge_mobile_brain_v2") { this.key = key; this.mem = {}; this.load(); }
+  load(){ try{ const d = localStorage.getItem(this.key); if(d) this.mem = JSON.parse(d);}catch(e){} }
+  save(){ try{ localStorage.setItem(this.key, JSON.stringify(this.mem)); }catch(e){} }
+  get(k){ const e = this.mem[k]; if(!e || !e.N) return null; return e.W / e.N; }
+  update(k, z){ if(!this.mem[k]) this.mem[k]={N:0,W:0}; const e=this.mem[k]; e.N++; e.W += z; }
+  clear(){ this.mem={}; try{ localStorage.removeItem(this.key);}catch(e){} }
+}
+const brain = new GhostBrain();
+
+/** ---------- ML Value Models (Logistic Regression) ---------- **/
+const MLModels = {
+  baseUrl: "./models",
+  models: new Map(), // n -> { w: [] }
+
+  async loadForN(n){
+    if(this.models.has(n)) return this.models.get(n);
+    const url = `${this.baseUrl}/k${n}_value.json`;
+    try {
+        const res = await fetch(url, { cache: "force-cache" });
+        if(!res.ok) throw new Error(`Model load failed: ${res.status}`);
+        const data = await res.json();
+        if(!data || !Array.isArray(data.w)) throw new Error(`Bad model format (missing w[])`);
+        this.models.set(n, data);
+        return data;
+    } catch (e) {
+        console.warn("ML Model not found, falling back to pure MCTS", e);
+        throw e;
+    }
+  },
+
+  sigmoid(x){
+    // stable sigmoid
+    if (x >= 0) { const z = Math.exp(-x); return 1/(1+z); }
+    const z = Math.exp(x); return z/(1+z);
+  },
+
+  features(state){
+    const n = state.n;
+    const totalEdges = (n*(n-1))/2;
+    const remEdges = state.edgesRemaining;
+    const deg = state.degrees;
+
+    // degree histogram 0..n-1
+    const hist = new Array(n).fill(0);
+    let sum=0, sumSq=0, minD=1e9, maxD=-1e9;
+    for(let i=0;i<n;i++){
+      const d = deg[i];
+      hist[d] = (hist[d]||0) + 1;
+      sum += d; sumSq += d*d;
+      if(d<minD) minD=d; if(d>maxD) maxD=d;
+    }
+    const avg = sum/n;
+    const meanSq = sumSq/n;
+    const denom = Math.max(1, n-1);
+
+    const x = [];
+    x.push(1.0); // bias
+    x.push(remEdges/totalEdges); // edge density
+    for(let d=0; d<n; d++) x.push((hist[d]||0)/n); // degree hist
+    x.push(avg/denom);
+    x.push(minD/denom);
+    x.push(maxD/denom);
+    x.push((hist[1]||0)/n);
+    x.push((hist[2]||0)/n);
+    x.push(meanSq/(denom*denom));
+    return x; // length = n+8
+  },
+
+  predict(state, model){
+    const x = this.features(state);
+    const w = model.w;
+    let s=0;
+    const L = Math.min(w.length, x.length);
+    for(let i=0;i<L;i++) s += w[i]*x[i];
+    return this.sigmoid(s); // prob current player wins
+  }
 };
-brain.load();
 
+/** ---------- Game State ---------- **/
 class GraphState {
-    constructor(n, activeMask = null, degrees = null, edges = null) {
-        this.n = n;
-        if (activeMask === null) {
-            this.edges = []; let idx = 0;
-            for (let u = 0; u < n; u++) for (let v = u + 1; v < n; v++) { this.edges.push({ u, v, idx }); idx++; }
-            this.num_edges = idx; 
-            this.activeMask = (1n << BigInt(this.num_edges)) - 1n;
-            this.degrees = new Int8Array(n).fill(n - 1);
-        } else {
-            this.edges = edges; this.activeMask = activeMask; 
-            this.degrees = new Int8Array(degrees); this.num_edges = edges.length;
+  constructor(n, activeMask=null, degrees=null, edges=null, edgesRemaining=null){
+    this.n = n;
+    if(activeMask===null){
+      this.edges = [];
+      let idx=0;
+      for(let u=0;u<n;u++){
+        for(let v=u+1;v<n;v++){
+          this.edges.push({u,v,idx});
+          idx++;
         }
+      }
+      this.num_edges = idx;
+      this.activeMask = (1n<<BigInt(this.num_edges)) - 1n;
+      this.degrees = new Int8Array(n).fill(n-1);
+      this.edgesRemaining = this.num_edges;
+    } else {
+      this.edges = edges;
+      this.num_edges = edges.length;
+      this.activeMask = activeMask;
+      this.degrees = new Int8Array(degrees);
+      this.edgesRemaining = edgesRemaining;
     }
-    clone() { return new GraphState(this.n, this.activeMask, this.degrees, this.edges); }
-    getHash(turn) { return `n${this.n}_${this.activeMask.toString()}_t${turn}`; }
-    getLegalMoves() {
-        const moves = [];
-        for (let i = 0; i < this.num_edges; i++) {
-            if ((this.activeMask >> BigInt(i)) & 1n) {
-                const e = this.edges[i];
-                if (this.degrees[e.u] === 1 || this.degrees[e.v] === 1) return [i]; 
-                moves.push(i);
-            }
-        }
-        return moves;
+  }
+  clone(){ return new GraphState(this.n, this.activeMask, this.degrees, this.edges, this.edgesRemaining); }
+  getHash(turn){ return `n${this.n}_${this.activeMask.toString()}_t${turn}`; }
+
+  getLegalMoves(){
+    const moves=[];
+    for(let i=0;i<this.num_edges;i++){
+      if(((this.activeMask>>BigInt(i)) & 1n)===0n) continue;
+      const e=this.edges[i];
+      // immediate win exists: remove last incident edge to degree-1 vertex
+      if(this.degrees[e.u]===1 || this.degrees[e.v]===1) return [i];
+      moves.push(i);
     }
-    doMove(moveIdx) {
-        if (!((this.activeMask >> BigInt(moveIdx)) & 1n)) return false;
-        this.activeMask &= ~(1n << BigInt(moveIdx));
-        const e = this.edges[moveIdx]; this.degrees[e.u]--; this.degrees[e.v]--;
-        return true;
-    }
-    isTerminal() { for(let i=0; i<this.n; i++) if(this.degrees[i] === 0) return true; return false; }
+    return moves;
+  }
+
+  doMove(i){
+    if(((this.activeMask>>BigInt(i)) & 1n)===0n) return false;
+    this.activeMask &= ~(1n<<BigInt(i));
+    const e=this.edges[i];
+    this.degrees[e.u]--; this.degrees[e.v]--;
+    this.edgesRemaining--;
+    return true;
+  }
+
+  isTerminal(){
+    for(let i=0;i<this.n;i++) if(this.degrees[i]===0) return true;
+    return false;
+  }
 }
 
+/** ---------- MCTS Node ---------- **/
 class MCTSNode {
-    constructor(move, parent, state, turn) {
-        this.move = move; this.parent = parent; this.children = new Map();
-        this.wins = 0; this.visits = 0; 
-        this.legalMoves = state ? state.getLegalMoves() : [];
-        if (state) this.priors = this.calcPriors(state, this.legalMoves);
+  constructor(move=null, parent=null, state=null){
+    this.move = move;
+    this.parent = parent;
+    this.children = new Map();
+    this.visits = 0;
+    this.wins = 0; // "value for player-to-move at this node" aggregated via backprop flip
+    this.isExpanded = false;
+    this.legalMoves = state ? state.getLegalMoves() : [];
+    this.movePriors = null;
+  }
+
+  calculatePriors(state){
+    const moves = this.legalMoves;
+    const priors = {};
+    let sum = 0;
+    for(const m of moves){
+      const e = state.edges[m];
+      const score = state.degrees[e.u] + state.degrees[e.v];
+      const w = Math.pow(score, 2);
+      priors[m] = w;
+      sum += w;
     }
-    calcPriors(state, moves) {
-        const map = {}; let sum = 0;
-        if (moves.length === 0) return map;
-        for (const m of moves) {
-            const e = state.edges[m]; 
-            const score = Math.pow(state.degrees[e.u] + state.degrees[e.v], 2);
-            map[m] = score; sum += score;
-        }
-        for (const m of moves) map[m] /= (sum || 1);
-        return map;
+    if(sum<=0){
+      const p = moves.length ? 1/moves.length : 0;
+      for(const m of moves) priors[m] = p;
+    } else {
+      for(const m of moves) priors[m] /= sum;
     }
-    select() {
-        let best = null, max = -Infinity;
-        for (const child of this.children.values()) {
-            const ucb = (child.visits > 0 ? child.wins/child.visits : 0.5) + 
-                        1.25 * (this.priors[child.move]||0) * (Math.sqrt(this.visits)/(1+child.visits));
-            if (ucb > max) { max = ucb; best = child; }
-        }
-        return best;
+    this.movePriors = priors;
+  }
+
+  selectChild(cpuct){
+    let best=null, bestScore=-Infinity;
+    for(const child of this.children.values()){
+      const Q = child.visits>0 ? child.wins/child.visits : 0.5;
+      const P = (this.movePriors && this.movePriors[child.move]) ? this.movePriors[child.move] : 0;
+      const U = cpuct * P * (Math.sqrt(this.visits)/(1+child.visits));
+      // We store "wins" from current player's perspective, so higher is better:
+      const score = Q + U;
+      if(score>bestScore){ bestScore=score; best=child; }
     }
+    return best;
+  }
+
+  expand(state){
+    if(!this.movePriors) this.calculatePriors(state);
+    for(const m of this.legalMoves){
+      if(!this.children.has(m)){
+        this.children.set(m, new MCTSNode(m, this, null));
+      }
+    }
+    this.isExpanded = true;
+  }
 }
 
-// --- Engine ---
-let game = { 
-    id: 0, n: 9, 
-    state: null, root: null, 
-    turn: 0, userRole: 0, 
-    history: [], 
-    selectedEdge: -1, // For double tap
-    nodes: [] 
+/** ---------- AI Engine ---------- **/
+class AIEngine {
+  constructor(state, startTurn=0, opts={}){
+    this.rootState = state.clone();
+    this.currentTurn = startTurn;
+    this.root = new MCTSNode(null, null, state);
+    this.cpuct = opts.cpuct ?? 1.25;
+    this.rolloutSteps = opts.rolloutSteps ?? 120;
+  }
+
+  advanceTree(moveIdx){
+    // apply move in state first
+    this.rootState.doMove(moveIdx);
+    this.currentTurn = 1 - this.currentTurn;
+
+    // reuse tree if possible
+    if(this.root.children.has(moveIdx)){
+      this.root = this.root.children.get(moveIdx);
+      this.root.parent = null;
+    } else {
+      this.root = new MCTSNode(null, null, this.rootState);
+    }
+  }
+
+  evaluate(state, turn){
+    if(state.isTerminal()) return 0.0;
+
+    // 1) ML model (if available)
+    const model = MLModels.models.get(state.n);
+    if(model){
+      return MLModels.predict(state, model);
+    }
+
+    // 2) GhostBrain (if available)
+    const h = state.getHash(turn);
+    const stored = brain.get(h);
+    if(stored !== null) return stored;
+
+    // 3) Rollout fallback
+    let tmp = state.clone();
+    let t = turn;
+    for(let steps=0; steps<this.rolloutSteps; steps++){
+      const moves = tmp.getLegalMoves();
+      if(moves.length===0) return 0.5;
+
+      // if there's an immediate win move, current player wins now
+      if(moves.length===1){
+        tmp.doMove(moves[0]);
+        // the mover caused terminal => mover wins
+        return 1.0;
+      }
+
+      // heuristic: avoid creating degree-1/2 if possible
+      let candidates = moves;
+      const safe = moves.filter(m=>{
+        const e = tmp.edges[m];
+        return tmp.degrees[e.u] > 2 && tmp.degrees[e.v] > 2;
+      });
+      if(safe.length) candidates = safe;
+
+      const m = candidates[(Math.random()*candidates.length)|0];
+      tmp.doMove(m);
+
+      if(tmp.isTerminal()){
+        // mover (player who just moved) wins -> that is player t
+        return 1.0;
+      }
+      t = 1 - t;
+    }
+    return 0.5;
+  }
+
+  run(iterBudget, gameId, onProgress){
+    return new Promise(resolve=>{
+      let it=0;
+      const batch=250; // tune for mobile smoothness
+
+      const step = ()=>{
+        if(game.id !== gameId) return; // cancelled
+        const end = Math.min(it+batch, iterBudget);
+
+        for(; it<end; it++){
+          let node = this.root;
+          let state = this.rootState.clone();
+          let turn = this.currentTurn;
+
+          // SELECTION
+          while(node.isExpanded && node.children.size>0){
+            const child = node.selectChild(this.cpuct);
+            if(!child) break;
+            node = child;
+            state.doMove(node.move);
+            turn = 1 - turn;
+          }
+
+          // EXPANSION
+          if(!state.isTerminal() && !node.isExpanded){
+            node.legalMoves = state.getLegalMoves();
+            node.calculatePriors(state);
+            node.expand(state);
+          }
+
+          // Choose a leaf to evaluate:
+          // If we expanded, pick one child to descend (optional). We'll just evaluate current state.
+          let v = this.evaluate(state, turn);
+
+          // BACKPROP: flip value each level (because players alternate)
+          while(node){
+            node.visits++;
+            node.wins += v;
+            v = 1.0 - v;
+            node = node.parent;
+          }
+        }
+
+        if(onProgress && (it % 1000 === 0 || it === iterBudget)) onProgress(it/iterBudget);
+
+        if(it < iterBudget) requestAnimationFrame(step);
+        else resolve(this.root);
+      };
+
+      step();
+    });
+  }
+
+  bestMove(){
+    let best=null, maxV=-1;
+    for(const child of this.root.children.values()){
+      if(child.visits > maxV){ maxV=child.visits; best=child; }
+    }
+    return best ? best.move : null;
+  }
+}
+
+/* =========================
+   UI + INPUT + RENDER (your existing mobile)
+   (kept, only wired to the new engine)
+   ========================= */
+
+let game = {
+  id: 0,
+  n: 9,
+  engine: null,
+  turn: 0,
+  userRole: 0,
+  nodes: [],
+  selectedEdge: -1,
+  history: [],
+  gameOver: false
 };
 
-function initGame(n, role) {
-    game.id++; game.n = n; game.userRole = role; game.turn = 0;
-    game.state = new GraphState(n);
-    game.root = new MCTSNode(null, null, game.state, 0);
-    game.history = []; game.selectedEdge = -1;
-    
-    // Layout Nodes (Circle)
-    game.nodes = [];
-    const r = 400; // Virtual world radius
-    for(let i=0; i<n; i++) {
-        const ang = (i * 2 * Math.PI / n) - Math.PI/2;
-        game.nodes.push({ x: Math.cos(ang)*r, y: Math.sin(ang)*r });
-    }
-    
-    Camera.reset();
-    resetUI();
-    
-    if (game.turn !== game.userRole) setTimeout(aiMove, 600);
+function setUI(state){
+  const statusText = document.getElementById('status-text');
+  const hintText = document.getElementById('hint-text');
+  const turnInd = document.getElementById('turn-indicator');
+  const thinkLine = document.getElementById('thinking-line');
+
+  if(state === 'thinking'){
+    statusText.innerText = "AI THINKING";
+    statusText.className = "text-xs font-bold uppercase tracking-widest text-purple-400";
+    hintText.innerText = "Please wait...";
+    turnInd.className = "w-3 h-3 rounded-full bg-purple-500 animate-pulse";
+    thinkLine.style.opacity = 1;
+  } else if(state === 'player'){
+    statusText.innerText = "YOUR TURN";
+    statusText.className = "text-xs font-bold uppercase tracking-widest text-emerald-400";
+    hintText.innerText = "Double tap edge to cut";
+    turnInd.className = "w-3 h-3 rounded-full bg-emerald-500 animate-pulse";
+    thinkLine.style.opacity = 0;
+  } else {
+    thinkLine.style.opacity = 0;
+  }
 }
 
-// AI Runner
-async function aiMove() {
-    if(game.state.isTerminal()) return;
-    setUI('thinking');
-    
-    const start = performance.now();
-    // GUNCELLEME: Mobilde "cok hizli" hissini kirmak ve AI'i guclendirmek icin
-    // sureyi 600ms'den 2500ms'ye (2.5 saniye) cikardim.
-    const budget = 2500; 
-    let iters = 0;
-    
-    // Async loop to not freeze UI
-    const runMCTS = () => {
-        const batchEnd = performance.now() + 15;
-        while(performance.now() < batchEnd) {
-            let node = game.root, tempState = game.state.clone(), t = game.turn;
-            // Select
-            while(node.children.size > 0 && node.legalMoves.length === 0) { 
-                node = node.select(); tempState.doMove(node.move); t = 1-t; 
-            }
-            // Expand
-            if(!tempState.isTerminal() && node.legalMoves.length > 0) {
-                const m = node.legalMoves.pop();
-                const child = new MCTSNode(m, node, tempState, 1-t);
-                node.children.set(m, child);
-                node = child; tempState.doMove(m); t = 1-t;
-            }
-            // Rollout
-            let simT = t, moves = 0;
-            while(!tempState.isTerminal() && moves < 50) {
-                const legal = tempState.getLegalMoves();
-                if(legal.length===0) break;
-                // Heuristic rollout: avoid creating isolated nodes if possible
-                let safe = legal.filter(x => { 
-                    const e = tempState.edges[x]; 
-                    return tempState.degrees[e.u] > 2 && tempState.degrees[e.v] > 2; 
-                });
-                if (safe.length === 0) safe = legal;
-                tempState.doMove(safe[Math.floor(Math.random()*safe.length)]);
-                simT = 1-simT; moves++;
-            }
-            // Backprop
-            let result = tempState.isTerminal() ? (simT === game.turn ? 0 : 1) : 0.5;
-            while(node) { node.visits++; node.wins += result; result = 1-result; node = node.parent; }
-            iters++;
-        }
-        
-        if (performance.now() - start < budget) {
-            requestAnimationFrame(runMCTS);
-        } else {
-            finalizeAIMove();
-        }
-    };
-    runMCTS();
+function resetUI(){
+  document.getElementById('message-overlay').classList.remove('visible');
 }
 
-function finalizeAIMove() {
-    let best = null, max = -1;
-    if (game.root.children.size === 0) {
-        // Emergency fallback
-        const moves = game.state.getLegalMoves();
-        if(moves.length > 0) executeMove(moves[0]);
-        return;
-    }
-    for(const c of game.root.children.values()) if(c.visits > max) { max = c.visits; best = c; }
-    executeMove(best.move);
+function initGame(n, role){
+  game.id++;
+  game.n = n;
+  game.userRole = role;
+  game.turn = 0;
+  game.selectedEdge = -1;
+  game.history = [];
+  game.gameOver = false;
+
+  // node layout in world coords
+  game.nodes = [];
+  const r = 400;
+  for(let i=0;i<n;i++){
+    const ang = (i * 2 * Math.PI / n) - Math.PI/2;
+    game.nodes.push({ x: Math.cos(ang)*r, y: Math.sin(ang)*r });
+  }
+
+  // engine
+  const startState = new GraphState(n);
+  game.engine = new AIEngine(startState, 0, { cpuct: 1.25, rolloutSteps: 120 });
+
+  Camera.reset();
+  resetUI();
+
+  // load ML model (optional)
+  MLModels.loadForN(n).then(()=>{
+    // optional: show in hint
+    if(document.getElementById('hint-text')) document.getElementById('hint-text').innerText = "ML Brain Active • Double tap edge";
+  }).catch(()=>{
+    // ignore, fallback logic still works
+  });
+
+  // if AI starts
+  if(game.turn !== game.userRole) setTimeout(()=>aiMove(game.id), 350);
+  else setUI('player');
 }
 
-function executeMove(idx) {
-    game.history.push({ h: game.state.getHash(game.turn), p: game.turn });
-    game.state.doMove(idx);
-    game.selectedEdge = -1; // Reset selection
-    
-    // Update MCTS tree
-    if (game.root.children.has(idx)) {
-        game.root = game.root.children.get(idx);
-        game.root.parent = null;
-    } else {
-        game.root = new MCTSNode(null, null, game.state, 1-game.turn);
-    }
+async function aiMove(sessionId){
+  if(game.gameOver) return;
+  if(sessionId !== game.id) return;
 
-    game.turn = 1 - game.turn;
-    
-    if (game.state.isTerminal()) {
-        endGame(1 - game.turn); // Previous player made the last move causing 0 degree
-    } else {
-        setUI(game.turn === game.userRole ? 'player' : 'thinking');
-        if (game.turn !== game.userRole) setTimeout(aiMove, 200);
-    }
-    
-    Renderer.triggerFlash(idx);
+  setUI('thinking');
+
+  // mobile: iteration budget. Increase to get stronger:
+  const ITERS = 25000; // try 10k, 25k, 50k depending on phone
+  await game.engine.run(ITERS, sessionId, (p)=>{
+    // optional: could animate thinking-line intensity; keep minimal
+  });
+  if(sessionId !== game.id || game.gameOver) return;
+
+  const move = game.engine.bestMove();
+  if(move === null){
+    const moves = game.engine.rootState.getLegalMoves();
+    if(moves.length) applyMove(moves[0]);
+    return;
+  }
+  applyMove(move);
 }
 
-function endGame(winner) {
-    // Save to brain
-    const winVal = winner === game.userRole ? 0 : 1; // AI pov
-    game.history.forEach(h => brain.update(h.h, h.p !== game.userRole ? winVal : 1-winVal));
-    brain.save();
+function applyMove(idx){
+  if(game.gameOver) return;
 
-    setUI('ended');
-    const isWin = winner === game.userRole;
-    document.getElementById('msg-title').innerText = isWin ? "VICTORY" : "DEFEAT";
-    document.getElementById('msg-title').className = isWin ? "text-4xl font-black text-emerald-400 mb-2" : "text-4xl font-black text-red-500 mb-2";
-    document.getElementById('msg-sub').innerText = isWin ? "You are the Edge Master." : "The AI isolated a node.";
-    document.getElementById('msg-icon').innerText = isWin ? "🏆" : "💀";
-    document.getElementById('message-overlay').classList.add('visible');
+  // record for ghostbrain training
+  game.history.push({ h: game.engine.rootState.getHash(game.turn), p: game.turn });
+
+  // make move
+  game.engine.advanceTree(idx);
+  Renderer.triggerFlash(idx);
+  game.selectedEdge = -1;
+
+  // check terminal
+  if(game.engine.rootState.isTerminal()){
+    endGame(game.turn); // the player who just moved is (previous turn) -> but we flipped in advanceTree
+    return;
+  }
+
+  // next turn
+  game.turn = 1 - game.turn;
+
+  if(game.turn !== game.userRole){
+    setTimeout(()=>aiMove(game.id), 200);
+  } else {
+    setUI('player');
+  }
 }
 
-/**
- * CAMERA & INPUT SYSTEM
- * Handles Touch, Zoom, Pan, Double Tap
- */
+function endGame(winner){
+  game.gameOver = true;
+
+  // winner param here is "current player index"? We want who caused terminal:
+  // Because we called endGame(game.turn) after terminal check in applyMove,
+  // game.turn is currently the player-to-move after advanceTree (i.e., loser).
+  // So actual winner is 1 - winner:
+  const actualWinner = 1 - winner;
+
+  // update ghost brain
+  for(const step of game.history){
+    const z = (step.p === actualWinner) ? 1.0 : 0.0;
+    brain.update(step.h, z);
+  }
+  brain.save();
+
+  const isWin = actualWinner === game.userRole;
+  document.getElementById('msg-title').innerText = isWin ? "VICTORY" : "DEFEAT";
+  document.getElementById('msg-title').className = isWin
+    ? "text-4xl font-black text-emerald-400 mb-2"
+    : "text-4xl font-black text-red-500 mb-2";
+  document.getElementById('msg-sub').innerText = isWin ? "You are the Edge Master." : "The AI isolated a node.";
+  document.getElementById('msg-icon').innerText = isWin ? "🏆" : "💀";
+  document.getElementById('message-overlay').classList.add('visible');
+  setUI('ended');
+}
+
+/** ---------- Camera + Input (yours, small wiring changes) ---------- **/
 const Camera = {
-    x: 0, y: 0, zoom: 1,
-    minZoom: 0.5, maxZoom: 3,
-    reset() { this.x = window.innerWidth/2; this.y = window.innerHeight/2; this.zoom = Math.min(window.innerWidth, window.innerHeight)/1000; },
-    toWorld(sx, sy) { return { x: (sx - this.x)/this.zoom, y: (sy - this.y)/this.zoom }; },
-    toScreen(wx, wy) { return { x: wx*this.zoom + this.x, y: wy*this.zoom + this.y }; }
+  x: 0, y: 0, zoom: 1,
+  minZoom: 0.5, maxZoom: 3,
+  reset(){
+    this.x = window.innerWidth/2;
+    this.y = window.innerHeight/2;
+    this.zoom = Math.min(window.innerWidth, window.innerHeight)/1000;
+  },
+  toWorld(sx, sy){ return { x:(sx-this.x)/this.zoom, y:(sy-this.y)/this.zoom }; },
+  toScreen(wx, wy){ return { x: wx*this.zoom + this.x, y: wy*this.zoom + this.y }; }
 };
+
+function distToSegment(p, v, w){
+  const l2 = (v.x-w.x)**2 + (v.y-w.y)**2;
+  if(l2===0) return Math.hypot(p.x-v.x, p.y-v.y);
+  let t = ((p.x-v.x)*(w.x-v.x)+(p.y-v.y)*(w.y-v.y))/l2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x-(v.x+t*(w.x-v.x)), p.y-(v.y+t*(w.y-v.y)));
+}
 
 const Input = {
-    lastTap: 0,
-    pointers: new Map(),
-    dist: 0,
-    init() {
-        const c = document.getElementById('gameCanvas');
-        c.addEventListener('pointerdown', this.down.bind(this));
-        c.addEventListener('pointermove', this.move.bind(this));
-        c.addEventListener('pointerup', this.up.bind(this));
-        c.addEventListener('pointercancel', this.up.bind(this));
-        c.addEventListener('wheel', this.wheel.bind(this), {passive: false});
-    },
-    getDist(p1, p2) { return Math.hypot(p1.clientX - p2.clientX, p1.clientY - p2.clientY); },
-    getCenter() {
-        let x=0, y=0, c=0;
-        for(let p of this.pointers.values()) { x+=p.clientX; y+=p.clientY; c++; }
-        return {x:x/c, y:y/c};
-    },
-    down(e) {
-        this.pointers.set(e.pointerId, e);
-        if (this.pointers.size === 2) {
-            const arr = Array.from(this.pointers.values());
-            this.dist = this.getDist(arr[0], arr[1]);
-        }
-    },
-    move(e) {
-        if (!this.pointers.has(e.pointerId)) return;
-        const prev = this.pointers.get(e.pointerId);
-        
-        if (this.pointers.size === 1) {
-            // Pan
-            Camera.x += e.clientX - prev.clientX;
-            Camera.y += e.clientY - prev.clientY;
-        } else if (this.pointers.size === 2) {
-            // Pinch Zoom
-            this.pointers.set(e.pointerId, e); // Update current
-            const arr = Array.from(this.pointers.values());
-            const newDist = this.getDist(arr[0], arr[1]);
-            const center = this.getCenter();
-            
-            // Zoom toward center
-            const factor = newDist / this.dist;
-            const newZoom = Math.min(Camera.maxZoom, Math.max(Camera.minZoom, Camera.zoom * factor));
-            
-            // Adjust pan to zoom into center
-            const wx = (center.x - Camera.x) / Camera.zoom;
-            const wy = (center.y - Camera.y) / Camera.zoom;
-            
-            Camera.x = center.x - wx * newZoom;
-            Camera.y = center.y - wy * newZoom;
-            Camera.zoom = newZoom;
-            this.dist = newDist;
-        }
-        this.pointers.set(e.pointerId, e);
-    },
-    up(e) {
-        // Tap Detection
-        if (this.pointers.size === 1 && game.turn === game.userRole) {
-            const p = this.pointers.get(e.pointerId);
-            const dur = performance.now() - this.lastTap;
-            const moveAmt = Math.hypot(e.clientX - p.clientX, e.clientY - p.clientY); // Ensure it wasn't a drag
-            
-            if (moveAmt < 10) {
-                this.handleTap(e.clientX, e.clientY);
-            }
-        }
-        this.pointers.delete(e.pointerId);
-        if(this.pointers.size === 0) this.lastTap = performance.now();
-    },
-    wheel(e) {
-        e.preventDefault();
-        const factor = e.deltaY > 0 ? 0.9 : 1.1;
-        const wx = (e.clientX - Camera.x) / Camera.zoom;
-        const wy = (e.clientY - Camera.y) / Camera.zoom;
-        Camera.zoom = Math.min(Camera.maxZoom, Math.max(Camera.minZoom, Camera.zoom * factor));
-        Camera.x = e.clientX - wx * Camera.zoom;
-        Camera.y = e.clientY - wy * Camera.zoom;
-    },
-    handleTap(sx, sy) {
-        const w = Camera.toWorld(sx, sy);
-        // Find closest edge
-        let best = -1, minD = 40 / Camera.zoom; // Touch tolerance
-        
-        const s = game.state;
-        for (let i = 0; i < s.num_edges; i++) {
-            if (!((s.activeMask >> BigInt(i)) & 1n)) continue;
-            const u = game.nodes[s.edges[i].u];
-            const v = game.nodes[s.edges[i].v];
-            const d = distToSegment(w, u, v);
-            if (d < minD) { minD = d; best = i; }
-        }
+  pointers: new Map(),
+  dist: 0,
 
-        if (best !== -1) {
-            // Double Tap Logic
-            if (game.selectedEdge === best) {
-                executeMove(best);
-            } else {
-                game.selectedEdge = best;
-                Renderer.pulse = 1;
-                // Auto deselect after 2s
-                setTimeout(() => { if(game.selectedEdge===best) game.selectedEdge = -1; }, 2000);
-            }
-        } else {
-            game.selectedEdge = -1;
-        }
+  init(){
+    const c = document.getElementById('gameCanvas');
+    c.addEventListener('pointerdown', this.down.bind(this));
+    c.addEventListener('pointermove', this.move.bind(this));
+    c.addEventListener('pointerup', this.up.bind(this));
+    c.addEventListener('pointercancel', this.up.bind(this));
+    c.addEventListener('wheel', this.wheel.bind(this), { passive:false });
+  },
+
+  getDist(p1,p2){ return Math.hypot(p1.clientX-p2.clientX, p1.clientY-p2.clientY); },
+  getCenter(){
+    let x=0,y=0,c=0;
+    for(const p of this.pointers.values()){ x+=p.clientX; y+=p.clientY; c++; }
+    return {x:x/c, y:y/c};
+  },
+
+  down(e){
+    this.pointers.set(e.pointerId, e);
+    if(this.pointers.size===2){
+      const arr=[...this.pointers.values()];
+      this.dist = this.getDist(arr[0], arr[1]);
     }
+  },
+
+  move(e){
+    if(!this.pointers.has(e.pointerId)) return;
+    const prev = this.pointers.get(e.pointerId);
+
+    if(this.pointers.size===1){
+      Camera.x += e.clientX - prev.clientX;
+      Camera.y += e.clientY - prev.clientY;
+    } else if(this.pointers.size===2){
+      this.pointers.set(e.pointerId, e);
+      const arr=[...this.pointers.values()];
+      const newDist = this.getDist(arr[0], arr[1]);
+      const center = this.getCenter();
+      const factor = newDist / this.dist;
+
+      const newZoom = Math.min(Camera.maxZoom, Math.max(Camera.minZoom, Camera.zoom * factor));
+
+      const wx = (center.x - Camera.x)/Camera.zoom;
+      const wy = (center.y - Camera.y)/Camera.zoom;
+
+      Camera.x = center.x - wx*newZoom;
+      Camera.y = center.y - wy*newZoom;
+      Camera.zoom = newZoom;
+
+      this.dist = newDist;
+    }
+
+    this.pointers.set(e.pointerId, e);
+  },
+
+  up(e){
+    if(!this.pointers.has(e.pointerId)) return;
+
+    // tap detection: only if it's player's turn and game is live
+    if(this.pointers.size===1 && !game.gameOver && game.turn===game.userRole){
+      const downEv = this.pointers.get(e.pointerId);
+      const moveAmt = Math.hypot(e.clientX - downEv.clientX, e.clientY - downEv.clientY);
+      if(moveAmt < 10) this.handleTap(e.clientX, e.clientY);
+    }
+
+    this.pointers.delete(e.pointerId);
+  },
+
+  wheel(e){
+    e.preventDefault();
+    const factor = e.deltaY>0 ? 0.9 : 1.1;
+    const wx = (e.clientX - Camera.x)/Camera.zoom;
+    const wy = (e.clientY - Camera.y)/Camera.zoom;
+    Camera.zoom = Math.min(Camera.maxZoom, Math.max(Camera.minZoom, Camera.zoom*factor));
+    Camera.x = e.clientX - wx*Camera.zoom;
+    Camera.y = e.clientY - wy*Camera.zoom;
+  },
+
+  handleTap(sx, sy){
+    if(!game.engine) return;
+    const w = Camera.toWorld(sx, sy);
+    const s = game.engine.rootState;
+
+    let best=-1;
+    let minD = 40/Camera.zoom;
+    for(let i=0;i<s.num_edges;i++){
+      if(((s.activeMask>>BigInt(i)) & 1n)===0n) continue;
+      const u = game.nodes[s.edges[i].u];
+      const v = game.nodes[s.edges[i].v];
+      const d = distToSegment(w, u, v);
+      if(d < minD){ minD=d; best=i; }
+    }
+
+    if(best !== -1){
+      // double tap selects then executes
+      if(game.selectedEdge === best){
+        applyMove(best);
+      } else {
+        game.selectedEdge = best;
+        setTimeout(()=>{ if(game.selectedEdge===best) game.selectedEdge=-1; }, 1600);
+      }
+    } else {
+      game.selectedEdge = -1;
+    }
+  }
 };
 
-function distToSegment(p, v, w) {
-    const l2 = (v.x-w.x)**2 + (v.y-w.y)**2;
-    if (l2 == 0) return Math.hypot(p.x-v.x, p.y-v.y);
-    let t = ((p.x-v.x)*(w.x-v.x) + (p.y-v.y)*(w.y-v.y)) / l2;
-    t = Math.max(0, Math.min(1, t));
-    return Math.hypot(p.x - (v.x + t*(w.x-v.x)), p.y - (v.y + t*(w.y-v.y)));
-}
-
-/**
- * RENDERER
- * Optimized Canvas drawing
- */
+/** ---------- Renderer (yours, minimal dependency on game.engine.rootState) ---------- **/
 const Renderer = {
-    canvas: null,
-    ctx: null,
-    pulse: 0,
-    flash: null, // {idx, time, color}
-    
-    init() {
-        this.canvas = document.getElementById('gameCanvas');
-        if (this.canvas) {
-            this.ctx = this.canvas.getContext('2d');
-            this.resize();
-            this.loop();
-        }
-    },
+  canvas:null, ctx:null, flash:null,
 
-    loop() {
-        if (!this.ctx || !this.canvas) return;
+  init(){
+    this.canvas = document.getElementById('gameCanvas');
+    this.ctx = this.canvas.getContext('2d');
+    this.resize();
+    this.loop();
+  },
 
-        this.ctx.fillStyle = game.userRole === 0 ? '#0f172a' : '#022c22';
-        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-        
-        if (!game.state) { requestAnimationFrame(()=>this.loop()); return; }
+  resize(){
+    if (!this.canvas) return;
+    this.canvas.width = window.innerWidth;
+    this.canvas.height = window.innerHeight;
+  },
 
-        this.ctx.save();
-        this.ctx.translate(Camera.x, Camera.y);
-        this.ctx.scale(Camera.zoom, Camera.zoom);
-        
-        // Draw Edges
-        this.ctx.lineCap = 'round';
-        const s = game.state;
-        for (let i = 0; i < s.num_edges; i++) {
-            if (!((s.activeMask >> BigInt(i)) & 1n)) continue;
-            const e = s.edges[i];
-            const p1 = game.nodes[e.u], p2 = game.nodes[e.v];
-            
-            this.ctx.beginPath();
-            this.ctx.moveTo(p1.x, p1.y);
-            this.ctx.lineTo(p2.x, p2.y);
-            
-            if (i === game.selectedEdge) {
-                this.ctx.lineWidth = 8;
-                this.ctx.strokeStyle = '#f43f5e';
-                this.ctx.shadowColor = '#f43f5e';
-                this.ctx.shadowBlur = 10;
-            } else {
-                this.ctx.lineWidth = 3;
-                this.ctx.strokeStyle = '#334155';
-                this.ctx.shadowBlur = 0;
-            }
-            this.ctx.stroke();
-        }
-        
-        // Flash animation for last move
-        if (this.flash && (Date.now() - this.flash.time < 500)) {
-            const e = s.edges[this.flash.idx] || {u:0, v:0}; // fallback if edge gone, but actually edges persist just mask changes. Wait, my GraphState keeps edge definitions
-            // Oh, edges array is constant. 
-            const edgeDef = s.edges[this.flash.idx];
-            if(edgeDef) {
-                const p1 = game.nodes[edgeDef.u], p2 = game.nodes[edgeDef.v];
-                this.ctx.beginPath(); this.ctx.moveTo(p1.x, p1.y); this.ctx.lineTo(p2.x, p2.y);
-                this.ctx.lineWidth = 6;
-                this.ctx.strokeStyle = this.flash.color;
-                this.ctx.globalAlpha = 1 - (Date.now() - this.flash.time)/500;
-                this.ctx.stroke();
-                this.ctx.globalAlpha = 1;
-            }
-        }
+  triggerFlash(idx){
+    this.flash = { idx, time: Date.now(), color: (game.turn===1) ? '#a855f7' : '#10b981' };
+  },
 
-        // Draw Nodes
-        this.ctx.shadowBlur = 0;
-        for(let i=0; i<game.n; i++) {
-            const p = game.nodes[i];
-            const d = s.degrees[i];
-            
-            this.ctx.beginPath();
-            this.ctx.arc(p.x, p.y, 25, 0, Math.PI*2);
-            
-            if (d === 1) { this.ctx.fillStyle = '#ef4444'; }
-            else if (d === 2) { this.ctx.fillStyle = '#eab308'; }
-            else { this.ctx.fillStyle = '#3b82f6'; }
-            
-            this.ctx.fill();
-            this.ctx.strokeStyle = '#1e293b';
-            this.ctx.lineWidth = 4;
-            this.ctx.stroke();
-            
-            this.ctx.fillStyle = '#fff';
-            this.ctx.font = 'bold 16px Inter';
-            this.ctx.textAlign = 'center';
-            this.ctx.textBaseline = 'middle';
-            this.ctx.fillText(d, p.x, p.y);
-        }
+  loop(){
+    if(!this.ctx || !this.canvas) return;
+    const ctx=this.ctx;
+    ctx.fillStyle = (game.userRole===0) ? '#0f172a' : '#022c22';
+    ctx.fillRect(0,0,this.canvas.width,this.canvas.height);
 
-        this.ctx.restore();
-        requestAnimationFrame(()=>this.loop());
-    },
-    resize() {
-        if (!this.canvas) return;
-        this.canvas.width = window.innerWidth;
-        this.canvas.height = window.innerHeight;
-    },
-    triggerFlash(idx) {
-        this.flash = { idx, time: Date.now(), color: game.turn === 0 ? '#a855f7' : '#10b981' }; // color of player who JUST moved (which is now prev turn)
-        // Wait, executeMove flips turn. So if Alice (0) moved, turn is now 1. 
-        // We want the color of the move just made. 
-        this.flash.color = (game.turn === 1) ? '#a855f7' : '#10b981';
+    if(!game.engine){
+      requestAnimationFrame(()=>this.loop());
+      return;
     }
+
+    const s = game.engine.rootState;
+
+    ctx.save();
+    ctx.translate(Camera.x, Camera.y);
+    ctx.scale(Camera.zoom, Camera.zoom);
+
+    // edges
+    ctx.lineCap = "round";
+    for(let i=0;i<s.num_edges;i++){
+      if(((s.activeMask>>BigInt(i)) & 1n)===0n) continue;
+      const e=s.edges[i];
+      const p1=game.nodes[e.u], p2=game.nodes[e.v];
+
+      ctx.beginPath();
+      ctx.moveTo(p1.x,p1.y);
+      ctx.lineTo(p2.x,p2.y);
+
+      if(i===game.selectedEdge){
+        ctx.lineWidth = 12;
+        ctx.strokeStyle = '#f43f5e';
+        ctx.shadowColor = '#f43f5e';
+        ctx.shadowBlur = 15;
+      } else {
+        ctx.lineWidth = 6;
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+        ctx.shadowBlur = 0;
+      }
+      ctx.stroke();
+    }
+
+    // flash last move
+    if(this.flash && (Date.now()-this.flash.time < 500)){
+      const edgeDef = s.edges[this.flash.idx];
+      if(edgeDef){
+        const p1=game.nodes[edgeDef.u], p2=game.nodes[edgeDef.v];
+        ctx.beginPath(); ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y);
+        ctx.lineWidth = 6;
+        ctx.strokeStyle = this.flash.color;
+        ctx.globalAlpha = 1 - (Date.now()-this.flash.time)/500;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    // nodes
+    ctx.shadowBlur = 0;
+    for(let i=0;i<game.n;i++){
+      const p=game.nodes[i];
+      const d=s.degrees[i];
+      ctx.beginPath();
+      ctx.arc(p.x,p.y,25,0,Math.PI*2);
+
+      if(d===1) ctx.fillStyle='#ef4444';
+      else if(d===2) ctx.fillStyle='#eab308';
+      else ctx.fillStyle='#3b82f6';
+
+      ctx.fill();
+      ctx.strokeStyle='#1e293b';
+      ctx.lineWidth=4;
+      ctx.stroke();
+
+      ctx.fillStyle='#fff';
+      ctx.font='bold 16px Inter';
+      ctx.textAlign='center';
+      ctx.textBaseline='middle';
+      ctx.fillText(d, p.x, p.y);
+    }
+
+    ctx.restore();
+    requestAnimationFrame(()=>this.loop());
+  }
 };
 
-/**
- * UI CONTROLLERS
- */
-function setUI(state) {
-    const statusText = document.getElementById('status-text');
-    const hintText = document.getElementById('hint-text');
-    const turnInd = document.getElementById('turn-indicator');
-    const thinkLine = document.getElementById('thinking-line');
-    
-    if (state === 'thinking') {
-        statusText.innerText = "AI THINKING";
-        statusText.className = "text-xs font-bold uppercase tracking-widest text-purple-400";
-        hintText.innerText = "Please wait...";
-        turnInd.className = "w-3 h-3 rounded-full bg-purple-500 animate-pulse";
-        thinkLine.style.opacity = 1;
-    } else if (state === 'player') {
-        statusText.innerText = "YOUR TURN";
-        statusText.className = "text-xs font-bold uppercase tracking-widest text-emerald-400";
-        hintText.innerText = "Double tap edge to cut";
-        turnInd.className = "w-3 h-3 rounded-full bg-emerald-500 animate-pulse";
-        thinkLine.style.opacity = 0;
-    } else {
-        thinkLine.style.opacity = 0;
-    }
+/** ---------- Settings/UI Buttons (yours) ---------- **/
+function toggleSettings(){
+  const m=document.getElementById('settings-modal');
+  const b=document.getElementById('modal-backdrop');
+  const active = m.classList.contains('active');
+  if(active){ m.classList.remove('active'); b.classList.remove('active'); }
+  else { m.classList.add('active'); b.classList.add('active'); }
 }
+window.toggleSettings = toggleSettings;
 
-function toggleSettings() {
-    const m = document.getElementById('settings-modal');
-    const b = document.getElementById('modal-backdrop');
-    if (m.classList.contains('active')) {
-        m.classList.remove('active');
-        b.classList.remove('active');
-    } else {
-        m.classList.add('active');
-        b.classList.add('active');
-    }
+function updateN(val){ document.getElementById('n-display').innerText = val; }
+window.updateN = updateN;
+
+function startGameAs(role){
+  document.getElementById('selection-screen').style.opacity = 0;
+  setTimeout(()=>{
+    document.getElementById('selection-screen').style.display='none';
+    initGame(parseInt(document.getElementById('nRange').value,10), role);
+  }, 350);
 }
+window.startGameAs = startGameAs;
 
-function updateN(val) {
-    document.getElementById('n-display').innerText = val;
+function changePlayer(){
+  toggleSettings();
+  document.getElementById('selection-screen').style.display='flex';
+  setTimeout(()=>document.getElementById('selection-screen').style.opacity = 1, 50);
 }
+window.changePlayer = changePlayer;
 
-function startGameAs(role) {
-    document.getElementById('selection-screen').style.opacity = 0;
-    setTimeout(() => {
-        document.getElementById('selection-screen').style.display = 'none';
-        initGame(9, role);
-    }, 500);
+function restartGame(){
+  document.getElementById('message-overlay').classList.remove('visible');
+  document.getElementById('settings-modal').classList.remove('active');
+  document.getElementById('modal-backdrop').classList.remove('active');
+  initGame(parseInt(document.getElementById('nRange').value,10), game.userRole);
 }
+window.restartGame = restartGame;
 
-function changePlayer() {
-    toggleSettings();
-    document.getElementById('selection-screen').style.display = 'flex';
-    setTimeout(()=>document.getElementById('selection-screen').style.opacity = 1, 50);
-}
-
-function restartGame() {
-    document.getElementById('message-overlay').classList.remove('visible');
-    const n = parseInt(document.getElementById('nRange').value);
-    toggleSettings();
-    // if modal was open, it closes. If triggered from overlay, toggleSettings closes nothing (harmless) or opens it? 
-    // Wait, toggleSettings checks class. 
-    // Force close modal
-    document.getElementById('settings-modal').classList.remove('active');
-    document.getElementById('modal-backdrop').classList.remove('active');
-    
-    initGame(n, game.userRole);
-}
-
-function resetUI() {
-    document.getElementById('message-overlay').classList.remove('visible');
-}
-
-// Init
-window.addEventListener('resize', () => Renderer.resize());
+/** ---------- Boot ---------- **/
+window.addEventListener('resize', ()=>Renderer.resize());
 Renderer.init();
 Input.init();
 </script>
