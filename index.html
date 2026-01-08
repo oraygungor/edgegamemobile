@@ -189,6 +189,8 @@
         <div class="flex flex-col">
             <span id="status-text" class="text-xs font-bold uppercase tracking-widest text-white">YOUR TURN</span>
             <span id="hint-text" class="text-[10px] text-slate-400 font-mono">Double tap to cut</span>
+            <!-- Opponent Name Indicator -->
+            <span id="opponent-name" class="text-[9px] font-bold uppercase tracking-wider mt-0.5 text-slate-500 transition-colors">VS: CALIBRATING...</span>
         </div>
     </div>
 
@@ -300,7 +302,7 @@ const MLModels = {
         this.models.set(n, data);
         return data;
     } catch (e) {
-        console.warn("ML Model not found, falling back to pure MCTS", e);
+        // console.warn("ML Model not found, falling back to pure MCTS", e);
         throw e;
     }
   },
@@ -667,12 +669,19 @@ function initGame(n, role){
   Camera.reset();
   resetUI();
 
+  const opName = document.getElementById('opponent-name');
+  opName.innerText = "VS: CALIBRATING...";
+  opName.className = "text-[9px] font-bold uppercase tracking-wider mt-0.5 text-slate-500 transition-colors";
+
   // load ML model (optional)
   MLModels.loadForN(n).then(()=>{
-    // optional: show in hint
-    if(document.getElementById('hint-text')) document.getElementById('hint-text').innerText = "ML Brain Active • Double tap edge";
+    // Model loaded successfully
+    opName.innerText = "VS: NEURAL CORE (ML)";
+    opName.className = "text-[9px] font-bold uppercase tracking-wider mt-0.5 text-pink-400 transition-colors shadow-pink-500/20 drop-shadow-sm";
   }).catch(()=>{
-    // ignore, fallback logic still works
+    // Fallback to MCTS
+    opName.innerText = "VS: CHAOS ENGINE (MCTS)";
+    opName.className = "text-[9px] font-bold uppercase tracking-wider mt-0.5 text-blue-400 transition-colors shadow-blue-500/20 drop-shadow-sm";
   });
 
   // if AI starts
@@ -705,17 +714,19 @@ async function aiMove(sessionId){
 function applyMove(idx){
   if(game.gameOver) return;
 
-  // record for ghostbrain training
+  // record for ghostbrain training (state BEFORE move, player-to-move = game.turn)
   game.history.push({ h: game.engine.rootState.getHash(game.turn), p: game.turn });
+
+  // visual flash for the move just made (game.turn is still the mover here)
+  Renderer.triggerFlash(idx);
 
   // make move
   game.engine.advanceTree(idx);
-  Renderer.triggerFlash(idx);
   game.selectedEdge = -1;
 
-  // check terminal
+  // check terminal: the mover (game.turn) just won
   if(game.engine.rootState.isTerminal()){
-    endGame(game.turn); // the player who just moved is (previous turn) -> but we flipped in advanceTree
+    endGame(game.turn);
     return;
   }
 
@@ -732,20 +743,14 @@ function applyMove(idx){
 function endGame(winner){
   game.gameOver = true;
 
-  // winner param here is "current player index"? We want who caused terminal:
-  // Because we called endGame(game.turn) after terminal check in applyMove,
-  // game.turn is currently the player-to-move after advanceTree (i.e., loser).
-  // So actual winner is 1 - winner:
-  const actualWinner = 1 - winner;
-
-  // update ghost brain
+  // update ghost brain: value = 1 if player-to-move at that hash eventually wins
   for(const step of game.history){
-    const z = (step.p === actualWinner) ? 1.0 : 0.0;
+    const z = (step.p === winner) ? 1.0 : 0.0;
     brain.update(step.h, z);
   }
   brain.save();
 
-  const isWin = actualWinner === game.userRole;
+  const isWin = winner === game.userRole;
   document.getElementById('msg-title').innerText = isWin ? "VICTORY" : "DEFEAT";
   document.getElementById('msg-title').className = isWin
     ? "text-4xl font-black text-emerald-400 mb-2"
@@ -904,7 +909,11 @@ const Renderer = {
   },
 
   triggerFlash(idx){
-    this.flash = { idx, time: Date.now(), color: (game.turn===1) ? '#a855f7' : '#10b981' };
+    this.flash = {
+      idx,
+      time: Date.now(),
+      color: (game.turn === 0) ? '#a855f7' : '#10b981' // Alice purple, Bob green
+    };
   },
 
   loop(){
